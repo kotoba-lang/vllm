@@ -1,0 +1,12 @@
+{:paths ["src"]
+ ;; Zero third-party runtime deps — every namespace is portable .cljc (JVM, CLJS, SCI).
+ ;; A vLLM inference request IS data (:vllm/* maps); the library renders it to the
+ ;; OpenAI/vLLM wire shape (string-keyed maps) and normalizes responses. The actual
+ ;; HTTP + JSON (de)serialization is a host-injected ITransport port.
+ :deps {}
+ :aliases
+ {:test {:extra-paths ["test"]
+         :extra-deps {io.github.cognitect-labs/test-runner
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+         :main-opts ["-m" "cognitect.test-runner"]
+         :exec-fn cognitect.test-runner.api/test}}}
