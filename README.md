@@ -1,5 +1,7 @@
 # vllm-clj — vLLM 推論リクエストを EDN データとして
 
+[![CI](https://github.com/kotoba-lang/vllm/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/vllm/actions/workflows/ci.yml)
+
 An LLM inference request against a **vLLM (OpenAI-compatible) server**, defined
 as **plain EDN data**, with a pure renderer to the wire shape and a normalized
 response parser. Like its sibling libraries, vllm-clj treats the request as data
