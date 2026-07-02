@@ -128,5 +128,5 @@ non-2xx response becomes `{:vllm/error :http :vllm/status …}`. With the defaul
 ## Test
 
 ```
-clojure -X:test
+clojure -M:test
 ```
