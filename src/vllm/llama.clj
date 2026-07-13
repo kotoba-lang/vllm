@@ -1,0 +1,205 @@
+(ns vllm.llama
+  "Reference Llama-family decoder with RoPE, GQA, SwiGLU, and mutable KV cache."
+  (:require [vllm.gguf :as gguf]))
+
+(defn- fail [message data] (throw (ex-info (str "vllm.llama: " message) data)))
+(defn- farray [xs] (if (instance? (Class/forName "[F") xs) xs (float-array xs)))
+
+(defn- tensor [shape data] {:shape (mapv long shape) :data (farray data)})
+
+(defn- matvec [{:keys [shape data]} ^floats x]
+  (let [[rows columns] shape]
+    (when-not (= columns (alength x))
+      (fail "matrix/vector shape mismatch" {:matrix shape :vector (alength x)}))
+    (let [out (float-array rows)]
+      (dotimes [row rows]
+        (let [base (* row columns)]
+          (aset-float out row
+                      (float (loop [column 0 sum 0.0]
+                               (if (< column columns)
+                                 (recur (inc column)
+                                        (+ sum (* (aget ^floats data (+ base column))
+                                                  (aget x column))))
+                                 sum))))))
+      out)))
+
+(defn- add! [^floats target ^floats source]
+  (dotimes [i (alength target)]
+    (aset-float target i (float (+ (aget target i) (aget source i)))))
+  target)
+
+(defn- rms-norm [^floats x {:keys [data]} epsilon]
+  (let [n (alength x)
+        mean-square (/ (loop [i 0 sum 0.0]
+                         (if (< i n)
+                           (let [v (aget x i)] (recur (inc i) (+ sum (* v v))))
+                           sum)) n)
+        scale (/ 1.0 (Math/sqrt (+ mean-square epsilon)))
+        out (float-array n)]
+    (dotimes [i n]
+      (aset-float out i (float (* (aget x i) scale (aget ^floats data i)))))
+    out))
+
+(defn- silu [x] (* x (/ 1.0 (+ 1.0 (Math/exp (- x))))))
+
+(defn- rope! [^floats vector heads head-dim position theta rope-dim]
+  (dotimes [head heads]
+    (let [base (* head head-dim)]
+      (doseq [pair (range 0 rope-dim 2)]
+        (let [frequency (/ 1.0 (Math/pow theta (/ pair rope-dim)))
+              angle (* position frequency) c (Math/cos angle) s (Math/sin angle)
+              i (+ base pair) j (inc i) a (aget vector i) b (aget vector j)]
+          (aset-float vector i (float (- (* a c) (* b s))))
+          (aset-float vector j (float (+ (* a s) (* b c))))))))
+  vector)
+
+(defn create-model
+  "Create an executable model from config and decoded tensors.
+
+  Config keys: `:vocab-size :embedding-length :block-count :head-count
+  :head-count-kv :feed-forward-length :context-length`, with optional
+  `:rope-dimension-count :rope-freq-base :rms-epsilon`.
+  Tensor keys follow GGUF names (`token_embd.weight`, `blk.N.attn_q.weight`, …)."
+  [config tensors]
+  (let [{:keys [vocab-size embedding-length block-count head-count head-count-kv
+                feed-forward-length context-length]} config
+        head-count-kv (or head-count-kv head-count)
+        head-dim (quot embedding-length head-count)
+        rope-dim (or (:rope-dimension-count config) head-dim)]
+    (when-not (and (every? pos-int? [vocab-size embedding-length block-count head-count
+                                     head-count-kv feed-forward-length context-length])
+                   (zero? (mod embedding-length head-count))
+                   (zero? (mod head-count head-count-kv))
+                   (even? rope-dim) (<= rope-dim head-dim))
+      (fail "invalid Llama configuration" {:config config}))
+    {:config (assoc config :head-count-kv head-count-kv :head-dim head-dim
+                    :rope-dimension-count rope-dim)
+     :tensors tensors}))
+
+(defn load-gguf
+  "Load a Llama GGUF into the reference executor. Tensor payloads are decoded
+  on first use and cached as unboxed F32 arrays. The GGUF file must remain open."
+  [model-file]
+  (let [m (:metadata model-file) architecture (get m "general.architecture")]
+    (when-not (= "llama" architecture)
+      (fail "only general.architecture=llama is executable" {:architecture architecture}))
+    (let [prefix architecture
+          required (fn [suffix]
+                     (or (get m (str prefix "." suffix))
+                         (fail "required GGUF metadata is missing" {:key (str prefix "." suffix)})))
+          cache (atom {})
+          load! (fn [name]
+                  (or (get @cache name)
+                      (let [{:keys [shape data]} (gguf/read-tensor-f32 model-file name)
+                            value (tensor shape data)]
+                        (swap! cache assoc name value) value)))
+          config {:vocab-size (count (get m "tokenizer.ggml.tokens"))
+                  :embedding-length (required "embedding_length")
+                  :block-count (required "block_count")
+                  :head-count (required "attention.head_count")
+                  :head-count-kv (get m "llama.attention.head_count_kv")
+                  :feed-forward-length (required "feed_forward_length")
+                  :context-length (required "context_length")
+                  :rope-dimension-count (get m "llama.rope.dimension_count")
+                  :rope-freq-base (get m "llama.rope.freq_base" 10000.0)
+                  :rms-epsilon (get m "llama.attention.layer_norm_rms_epsilon" 1.0e-5)}]
+      (assoc (create-model config load!) :tensor-cache cache))))
+
+(defn new-state [model]
+  (let [{:keys [block-count context-length head-count-kv head-dim]} (:config model)
+        size (* context-length head-count-kv head-dim)]
+    {:position (atom 0)
+     :keys (mapv (fn [_] (float-array size)) (range block-count))
+     :values (mapv (fn [_] (float-array size)) (range block-count))}))
+
+(defn- tensor! [model name]
+  (let [source (:tensors model)]
+    (if (fn? source) (source name)
+        (or (get source name) (fail "model tensor is missing" {:tensor name})))))
+
+(defn- embedding-row [model token-id]
+  (let [{:keys [shape data]} (tensor! model "token_embd.weight")
+        [vocab width] shape]
+    (when-not (<= 0 token-id (dec vocab)) (fail "token ID out of range" {:token token-id}))
+    (let [out (float-array width) base (* token-id width)]
+      (System/arraycopy data base out 0 width) out)))
+
+(defn- attention [model state layer position ^floats normalized]
+  (let [{:keys [head-count head-count-kv head-dim rope-dimension-count rope-freq-base]}
+        (:config model)
+        prefix (str "blk." layer ".")
+        q (matvec (tensor! model (str prefix "attn_q.weight")) normalized)
+        k (matvec (tensor! model (str prefix "attn_k.weight")) normalized)
+        v (matvec (tensor! model (str prefix "attn_v.weight")) normalized)
+        _ (rope! q head-count head-dim position (or rope-freq-base 10000.0)
+                 rope-dimension-count)
+        _ (rope! k head-count-kv head-dim position (or rope-freq-base 10000.0)
+                 rope-dimension-count)
+        ^floats key-cache (nth (:keys state) layer)
+        ^floats value-cache (nth (:values state) layer)
+        cache-width (* head-count-kv head-dim)
+        cache-base (* position cache-width)
+        _ (System/arraycopy k 0 key-cache cache-base cache-width)
+        _ (System/arraycopy v 0 value-cache cache-base cache-width)
+        grouped (quot head-count head-count-kv)
+        attended (float-array (* head-count head-dim))]
+    (dotimes [head head-count]
+      (let [kv-head (quot head grouped) q-base (* head head-dim)
+            scores (double-array (inc position))]
+        (dotimes [past (inc position)]
+          (let [k-base (+ (* past cache-width) (* kv-head head-dim))]
+            (aset-double scores past
+                         (/ (loop [i 0 sum 0.0]
+                              (if (< i head-dim)
+                                (recur (inc i) (+ sum (* (aget q (+ q-base i))
+                                                          (aget key-cache (+ k-base i)))))
+                                sum))
+                            (Math/sqrt head-dim)))))
+        (let [maximum (reduce max (seq scores))
+              denominator (loop [i 0 sum 0.0]
+                            (if (< i (alength scores))
+                              (recur (inc i) (+ sum (Math/exp (- (aget scores i) maximum))))
+                              sum))]
+          (dotimes [past (inc position)]
+            (let [probability (/ (Math/exp (- (aget scores past) maximum)) denominator)
+                  v-base (+ (* past cache-width) (* kv-head head-dim))]
+              (dotimes [i head-dim]
+                (let [index (+ q-base i)]
+                  (aset-float attended index
+                              (float (+ (aget attended index)
+                                        (* probability (aget value-cache (+ v-base i)))))))))))))
+    (matvec (tensor! model (str prefix "attn_output.weight")) attended)))
+
+(defn step!
+  "Consume one token at the state's current position, mutate its KV cache, and
+  return `{:logits float-array :position p}`. State is single-sequence."
+  [model state token-id]
+  (let [{:keys [block-count context-length rms-epsilon]} (:config model)
+        position @(:position state)]
+    (when (>= position context-length)
+      (fail "KV cache context is full" {:position position :context-length context-length}))
+    (let [hidden
+          (loop [layer 0 hidden (embedding-row model token-id)]
+            (if (= layer block-count) hidden
+              (let [prefix (str "blk." layer ".")
+                    normalized (rms-norm hidden (tensor! model (str prefix "attn_norm.weight"))
+                                         (or rms-epsilon 1.0e-5))
+                    residual (add! hidden (attention model state layer position normalized))
+                    ffn-input (rms-norm residual (tensor! model (str prefix "ffn_norm.weight"))
+                                        (or rms-epsilon 1.0e-5))
+                    gate (matvec (tensor! model (str prefix "ffn_gate.weight")) ffn-input)
+                    up (matvec (tensor! model (str prefix "ffn_up.weight")) ffn-input)
+                    activated (float-array (alength gate))]
+                (dotimes [i (alength gate)]
+                  (aset-float activated i (float (* (silu (aget gate i)) (aget up i)))))
+                (recur (inc layer)
+                       (add! residual
+                             (matvec (tensor! model (str prefix "ffn_down.weight")) activated))))))
+          final (rms-norm hidden (tensor! model "output_norm.weight")
+                          (or rms-epsilon 1.0e-5))
+          output-weight (try (tensor! model "output.weight")
+                             (catch clojure.lang.ExceptionInfo _
+                               (tensor! model "token_embd.weight")))
+          logits (matvec output-weight final)]
+      (swap! (:position state) inc)
+      {:logits logits :position position})))
