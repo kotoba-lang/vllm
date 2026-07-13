@@ -13,6 +13,13 @@
     {:model (get metadata "tokenizer.ggml.model")
      :tokens (vec tokens) :scores (mapv double scores) :types (mapv long types)
      :token->id (zipmap tokens (range))
+     :tokens-by-prefix
+     (reduce-kv (fn [index id token]
+                  (if (empty? token) index
+                    (let [width (min 2 (.length ^String token))]
+                      (update index (.substring ^String token 0 width)
+                              (fnil conj []) [id token]))))
+                {} (vec tokens))
      :chat-template (get metadata "tokenizer.chat_template")
      :bos-id (get metadata "tokenizer.ggml.bos_token_id")
      :eos-id (get metadata "tokenizer.ggml.eos_token_id")
@@ -99,13 +106,20 @@
      (aset best 0 {:score 0.0 :ids []})
      (dotimes [start n]
        (when-let [{:keys [score ids]} (aget best start)]
-         (doseq [[id token] (map-indexed vector (:tokens tokenizer))
+         (let [remaining (- n start)
+               one (.substring source start (inc start))
+               prefix (.substring source start (+ start (min 2 remaining)))
+               candidates (if (= prefix one)
+                            (get (:tokens-by-prefix tokenizer) one [])
+                            (concat (get (:tokens-by-prefix tokenizer) prefix [])
+                                    (get (:tokens-by-prefix tokenizer) one [])))]
+        (doseq [[id token] candidates
                  :when (and (not (contains? #{3 5} (nth (:types tokenizer) id)))
                             (.startsWith source token start))]
            (let [end (+ start (.length token)) candidate (+ score (nth (:scores tokenizer) id))
                  previous (aget best end)]
              (when (or (nil? previous) (> candidate (:score previous)))
-               (aset best end {:score candidate :ids (conj ids id)}))))))
+               (aset best end {:score candidate :ids (conj ids id)})))))))
      (let [ids (if-let [result (aget best n)]
                  (:ids result)
                  (byte-fallback tokenizer source))]

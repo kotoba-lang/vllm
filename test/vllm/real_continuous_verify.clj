@@ -21,7 +21,7 @@
   (with-open [worker (metal/start ["deno" "run" "--allow-all"
                                   (or worker-path "../num/target/deno-q8-worker.cjs")])
               runtime (ollama/runtime {:accelerator worker :workers 2
-                                       :batch-window-ms 1000 :max-batch-size 8})]
+                                       :batch-window-ms 30 :max-batch-size 8})]
     (ollama/load! runtime "continuous" path)
     (with-open [http (server/start! runtime {:port 0 :threads 2})]
       (let [clients [(HttpClient/newHttpClient) (HttpClient/newHttpClient)]
