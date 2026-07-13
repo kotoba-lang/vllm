@@ -22,3 +22,6 @@
   (clone-kv! [accelerator handle id])
   (attention! [accelerator handle layer position heads q k v])
   (release-kv! [accelerator handle]))
+
+(defprotocol IBatchedAttentionAccelerator
+  (attention-many! [accelerator requests]))

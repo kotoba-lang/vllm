@@ -29,12 +29,16 @@
           report {:sequences 2 :max-absolute-errors errors
                   :metal-submissions (:submissions stats)
                   :single-gemv (:gemv stats) :batched-gemv (:gemv-many stats)
+                  :single-attention (:attention stats)
+                  :batched-attention (:attention-many stats)
                   :resident-handles (:handles stats)
                   :resident-kv-handles (:kv-handles stats)
                   :seconds (/ (- (System/nanoTime) started) 1.0e9)}]
       (println (pr-str report))
       (when-not (and (every? #(< % 0.02) errors)
                      (= 24 (:submissions stats))
+                     (= 6 (:attention-many stats))
+                     (zero? (or (:attention stats) 0))
                      (= [1 1] positions)
                      (zero? (:kv-handles stats)))
         (throw (ex-info "real sequence batch diverged" report)))

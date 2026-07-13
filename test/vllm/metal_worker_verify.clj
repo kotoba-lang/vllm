@@ -147,5 +147,15 @@
             (accelerator/release-kv! worker clone))
           (accelerator/release-kv! worker kv)
           (when-not (zero? (:kv-handles (metal/stats worker)))
-            (throw (ex-info "Metal worker leaked KV cache" {})))))
+            (throw (ex-info "Metal worker leaked KV cache" {}))))
+        (let [growing (accelerator/create-kv! worker "growing" 1 40 1 2)
+              initial (metal/stats worker)
+              _ (accelerator/attention! worker growing 0 16 2
+                                         [1 0 0 1] [1 0] [2 3])
+              grown (metal/stats worker)]
+          (println "Metal growing KV bytes:" (:kv-bytes initial) "->" (:kv-bytes grown))
+          (when-not (and (= 256 (:kv-bytes initial)) (= 512 (:kv-bytes grown))
+                         (= 1 (:kv-grows grown)))
+            (throw (ex-info "Metal KV block growth verification failed" {})))
+          (accelerator/release-kv! worker growing)))
       (finally (.close ^Closeable worker)))))

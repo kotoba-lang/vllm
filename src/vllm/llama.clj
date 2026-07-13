@@ -341,6 +341,26 @@
     (matrix-vector (tensor! model (str prefix "attn_output.weight"))
                    (attend-projected model state layer position q k v))))
 
+(defn- attend-projected-batch [model states layer positions projections]
+  (let [{:keys [head-count head-count-kv head-dim rope-dimension-count rope-freq-base]}
+        (:config model)
+        backend (:accelerator (first states))]
+    (if (and backend (satisfies? accelerator/IBatchedAttentionAccelerator backend)
+             (every? #(and (:kv-handle %) (identical? backend (:accelerator %))) states))
+      (let [requests
+            (mapv (fn [state position [q k v]]
+                    (rope! q head-count head-dim position (or rope-freq-base 10000.0)
+                           rope-dimension-count)
+                    (rope! k head-count-kv head-dim position (or rope-freq-base 10000.0)
+                           rope-dimension-count)
+                    {:handle (:kv-handle state) :layer layer :position position
+                     :heads head-count :q q :k k :v v})
+                  states positions projections)]
+        (accelerator/attention-many! backend requests))
+      (mapv (fn [state position [q k v]]
+              (attend-projected model state layer position q k v))
+            states positions projections))))
+
 (defn step!
   "Consume one token at the state's current position, mutate its KV cache, and
   return `{:logits float-array :position p}`. State is single-sequence."
@@ -398,9 +418,7 @@
                                   (tensor! model (str prefix "attn_k.weight"))
                                   (tensor! model (str prefix "attn_v.weight"))]
                                  normalized)
-                    attended (mapv (fn [state position [q k v]]
-                                     (attend-projected model state layer position q k v))
-                                   states positions projections)
+                    attended (attend-projected-batch model states layer positions projections)
                     attention-output (matrix-vector-batch
                                       (tensor! model (str prefix "attn_output.weight"))
                                       attended)

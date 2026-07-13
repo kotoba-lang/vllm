@@ -87,6 +87,17 @@
                                  :q (vec q) :k (vec k) :v (vec v)})))))
   (release-kv! [this handle]
     (locking lock (exchange! this {:op "release-kv" :id handle}) nil))
+  accelerator/IBatchedAttentionAccelerator
+  (attention-many! [this requests]
+    (locking lock
+      (mapv (comp float-array :output)
+            (:results
+             (exchange! this
+                        {:op "attention-many"
+                         :requests (mapv (fn [{:keys [handle layer position heads q k v]}]
+                                           {:id handle :layer layer :position position
+                                            :heads heads :q (vec q) :k (vec k) :v (vec v)})
+                                         requests)})))))
   Closeable
   (close [_]
     (try (.close writer) (catch Exception _))
