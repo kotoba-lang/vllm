@@ -53,7 +53,7 @@
                                          requests)})))))
   accelerator/IQuantizedMatrixAccelerator
   (upload-quantized! [this type id rows columns bytes]
-    (when-not (contains? #{:q8-0 :q4-0} type)
+    (when-not (contains? #{:q8-0 :q4-0 :q4-k} type)
       (fail "unsupported Metal quantization" {:type type}))
     (locking lock
       (let [handle (str id "-" (UUID/randomUUID))
@@ -61,7 +61,8 @@
                                      (if (instance? ByteBuffer bytes)
                                        (buffer-bytes bytes)
                                        ^bytes bytes))]
-        (exchange! this {:op (case type :q8-0 "upload-q8" :q4-0 "upload-q4")
+        (exchange! this {:op (case type :q8-0 "upload-q8" :q4-0 "upload-q4"
+                                   :q4-k "upload-q4k")
                          :id handle :rows rows :cols columns :data encoded})
         handle)))
   Closeable

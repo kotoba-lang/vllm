@@ -93,3 +93,20 @@
            (vec (gguf/decode-f32 :q5-k q5 256))))
     (is (= (vec (repeat 256 0.0))
            (vec (gguf/decode-f32 :q6-k q6 256))))))
+
+(deftest decodes-q5-blocks
+  (let [q5-0 (doto (little-buffer 22)
+               (.putShort (unchecked-short 0x3c00))
+               (.putInt (unchecked-int 0xffffffff))
+               (.put (byte-array 16 (unchecked-byte 0x10)))
+               (.flip))
+        q5-1 (doto (little-buffer 24)
+               (.putShort (unchecked-short 0x3c00))
+               (.putShort (unchecked-short 0x3c00))
+               (.putInt 0)
+               (.put (byte-array 16 (unchecked-byte 0x10)))
+               (.flip))]
+    (is (= (mapv float (concat (repeat 16 0) (repeat 16 1)))
+           (vec (gguf/decode-f32 :q5-0 q5-0 32))))
+    (is (= (mapv float (concat (repeat 16 1) (repeat 16 2)))
+           (vec (gguf/decode-f32 :q5-1 q5-1 32))))))

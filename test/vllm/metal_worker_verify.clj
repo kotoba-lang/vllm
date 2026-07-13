@@ -22,6 +22,15 @@
     (.put (byte-array 16 (unchecked-byte 0x98)))
     (.flip)))
 
+(defn- raw-q4k-matrix []
+  (doto (ByteBuffer/allocate 144)
+    (.order ByteOrder/LITTLE_ENDIAN)
+    (.putShort (short 0x3c00))
+    (.putShort (short 0x3c00))
+    (.put (byte-array (concat (repeat 8 1) (repeat 4 0x11))))
+    (.put (byte-array 128))
+    (.flip)))
+
 (defn- close? [expected actual]
   (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-4) expected actual)))
 
@@ -50,5 +59,12 @@
           (println "Metal Q4_0:" result)
           (when-not (close? [8.0 16.0] result)
             (throw (ex-info "Metal Q4_0 verification failed" {:actual result})))
-          (accelerator/release! worker q4)))
+          (accelerator/release! worker q4))
+        (let [q4k (accelerator/upload-quantized! worker :q4-k "q4k" 1 256
+                                                  (raw-q4k-matrix))
+              result (vec (accelerator/gemv! worker q4k (float-array (repeat 256 1.0))))]
+          (println "Metal Q4_K:" result)
+          (when-not (close? [-256.0] result)
+            (throw (ex-info "Metal Q4_K verification failed" {:actual result})))
+          (accelerator/release! worker q4k)))
       (finally (.close ^Closeable worker)))))

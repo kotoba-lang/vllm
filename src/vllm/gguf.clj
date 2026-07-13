@@ -222,6 +222,28 @@
                           (float (+ minimum (* scale (bit-and packed 0x0f)))))
               (aset-float out (+ base i 16)
                           (float (+ minimum (* scale (unsigned-bit-shift-right packed 4)))))))))
+      :q5-0
+      (doseq [base (range 0 element-count 32)]
+        (let [scale (half!) high (bit-and 0xffffffff (.getInt buffer))]
+          (dotimes [i 16]
+            (let [packed (bit-and 0xff (int (.get buffer)))
+                  low-q (+ (bit-and packed 15)
+                           (if (bit-test high i) 16 0))
+                  high-q (+ (unsigned-bit-shift-right packed 4)
+                            (if (bit-test high (+ i 16)) 16 0))]
+              (aset-float out (+ base i) (float (* scale (- low-q 16))))
+              (aset-float out (+ base i 16) (float (* scale (- high-q 16))))))))
+      :q5-1
+      (doseq [base (range 0 element-count 32)]
+        (let [scale (half!) minimum (half!) high (bit-and 0xffffffff (.getInt buffer))]
+          (dotimes [i 16]
+            (let [packed (bit-and 0xff (int (.get buffer)))
+                  low-q (+ (bit-and packed 15)
+                           (if (bit-test high i) 16 0))
+                  high-q (+ (unsigned-bit-shift-right packed 4)
+                            (if (bit-test high (+ i 16)) 16 0))]
+              (aset-float out (+ base i) (float (+ minimum (* scale low-q))))
+              (aset-float out (+ base i 16) (float (+ minimum (* scale high-q))))))))
       :q8-0
       (doseq [base (range 0 element-count 32)]
         (let [scale (half!)]
