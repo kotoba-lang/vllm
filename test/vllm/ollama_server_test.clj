@@ -37,4 +37,5 @@
         (is (= "tiny" (get-in (json/read-str (.body tags)) ["models" 0 "name"])))
         (is (= "ab" (get (json/read-str (.body generated)) "response")))
         (is (= ["a" "b"] (mapv #(get % "response") (butlast chunks))))
-        (is (true? (get (last chunks) "done")))))))
+        (is (true? (get (last chunks) "done")))))
+    (ollama/close! runtime)))

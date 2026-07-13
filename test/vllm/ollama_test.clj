@@ -33,4 +33,13 @@
     (is (= 404 (:status (ollama/handle runtime
                                          {:method :post :path "/api/generate"
                                           :body {"model" "missing"}}))))
-    (is (true? (ollama/unregister! runtime "tiny")))))
+    (is (= "tiny" (get-in (ollama/handle runtime
+                                          {:method :post :path "/api/show"
+                                           :body {"name" "tiny"}})
+                            [:body "name"])))
+    (is (= 2 (get-in (ollama/handle runtime {:method :get :path "/api/ps"})
+                     [:body "scheduler" :completed])))
+    (is (= 200 (:status (ollama/handle runtime
+                                        {:method :delete :path "/api/delete"
+                                         :body {"name" "tiny"}}))))
+    (is (= {:closed true} (ollama/close! runtime)))))

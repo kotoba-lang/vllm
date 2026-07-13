@@ -4,16 +4,25 @@
             [vllm.generate :as generate]
             [vllm.gguf :as gguf]
             [vllm.llama :as llama]
+            [vllm.manifest :as manifest]
+            [vllm.scheduler :as scheduler]
             [vllm.tokenizer :as tokenizer])
   (:import [java.io Closeable]
            [java.time Instant]))
 
-(defrecord OllamaRuntime [models])
+(declare close!)
+(defrecord OllamaRuntime [models scheduler store]
+  Closeable
+  (close [this] (close! this)))
 (defrecord GGUFEngine [name path file model tokenizer]
   Closeable
   (close [_] (.close ^Closeable file)))
 
-(defn runtime [] (->OllamaRuntime (atom {})))
+(defn runtime
+  ([] (runtime {}))
+  ([{:keys [model-store] :as options}]
+   (->OllamaRuntime (atom {}) (scheduler/scheduler options)
+                    (when model-store (manifest/store model-store)))))
 
 (defn register!
   "Register an engine map/record. It must expose `:name` and `:generate`, where
@@ -32,6 +41,7 @@
 
 (defn close! [runtime]
   (doseq [name (keys @(:models runtime))] (unregister! runtime name))
+  (.close ^Closeable (:scheduler runtime))
   {:closed true})
 
 (defn load-gguf-engine
@@ -62,6 +72,25 @@
 (defn load! [runtime name path]
   (register! runtime (load-gguf-engine name path)))
 
+(defn install!
+  "Import a GGUF into the configured content-addressed store and load it."
+  [runtime name path]
+  (when-not (:store runtime)
+    (throw (ex-info "runtime requires :model-store for install" {})))
+  (let [entry (manifest/import! (:store runtime) name path)]
+    (load! runtime name (manifest/model-path (:store runtime) name))
+    entry))
+
+(defn restore!
+  "Load every manifest from the configured model store."
+  [runtime]
+  (when-not (:store runtime)
+    (throw (ex-info "runtime requires :model-store for restore" {})))
+  (mapv (fn [entry]
+          (load! runtime (get entry "name")
+                 (manifest/model-path (:store runtime) (get entry "name"))))
+        (manifest/list-models (:store runtime))))
+
 (defn- message-prompt [messages]
   ;; A model-specific tokenizer.chat_template executor will replace this
   ;; conservative fallback. Role boundaries are explicit and deterministic.
@@ -87,13 +116,15 @@
     (if-not engine
       (error-response 404 (str "model '" model-name "' not found"))
       (let [started (System/nanoTime)
-            result ((:generate engine) prompt (options body)
-                    (when emit
-                      (fn [fragment]
-                        (emit (cond-> {"model" model-name "done" false}
-                                chat? (assoc "message" {"role" "assistant"
-                                                        "content" fragment})
-                                (not chat?) (assoc "response" fragment))))))
+            result (scheduler/run!
+                    (:scheduler runtime) model-name
+                    #((:generate engine) prompt (options body)
+                      (when emit
+                        (fn [fragment]
+                          (emit (cond-> {"model" model-name "done" false}
+                                  chat? (assoc "message" {"role" "assistant"
+                                                          "content" fragment})
+                                  (not chat?) (assoc "response" fragment)))))))
             elapsed (- (System/nanoTime) started)
             response (cond->
                       {"model" model-name "created_at" (str (Instant/now))
@@ -124,6 +155,29 @@
                                "details" {"format" "gguf"
                                           "family" "llama"}})
                             (sort-by key @(:models runtime)))}}
+
+    [:get "/api/ps"]
+    {:status 200
+     :body {"models" (mapv (fn [[name engine]]
+                              {"name" name "model" name
+                               "size" (when-let [path (:path engine)]
+                                        (.length (java.io.File. path)))})
+                            (sort-by key @(:models runtime)))
+            "scheduler" (scheduler/stats (:scheduler runtime))}}
+
+    [:post "/api/show"]
+    (let [name (get body "name")
+          entry (or (when (:store runtime) (manifest/show (:store runtime) name))
+                    (when-let [engine (get @(:models runtime) name)]
+                      {"name" name "path" (:path engine) "format" "gguf"}))]
+      (if entry {:status 200 :body entry}
+          (error-response 404 (str "model '" name "' not found"))))
+
+    [:delete "/api/delete"]
+    (let [name (get body "name") loaded? (unregister! runtime name)
+          stored? (when (:store runtime) (manifest/delete! (:store runtime) name))]
+      (if (or loaded? stored?) {:status 200 :body {}}
+          (error-response 404 (str "model '" name "' not found"))))
 
     [:post "/api/generate"]
     (run-generation runtime body (or (get body "prompt") "") false
