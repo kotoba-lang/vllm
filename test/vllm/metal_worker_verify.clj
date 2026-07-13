@@ -13,6 +13,15 @@
       (doseq [q (range -16 16)] (.put bytes (byte q))))
     (.flip bytes)))
 
+(defn- raw-q4-matrix []
+  (doto (ByteBuffer/allocate 36)
+    (.order ByteOrder/LITTLE_ENDIAN)
+    (.putShort (short 0x3800))
+    (.put (byte-array 16 (unchecked-byte 0x98)))
+    (.putShort (short 0x3c00))
+    (.put (byte-array 16 (unchecked-byte 0x98)))
+    (.flip)))
+
 (defn- close? [expected actual]
   (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-4) expected actual)))
 
@@ -34,5 +43,12 @@
           (throw (ex-info "Metal worker verification failed" {})))
         (accelerator/release! worker handle)
         (when-not (zero? (:handles (metal/stats worker)))
-          (throw (ex-info "Metal worker leaked its handle" {}))))
+          (throw (ex-info "Metal worker leaked its handle" {})))
+        (let [q4 (accelerator/upload-quantized! worker :q4-0 "q4" 2 32
+                                                 (raw-q4-matrix))
+              result (vec (accelerator/gemv! worker q4 (float-array (repeat 32 1.0))))]
+          (println "Metal Q4_0:" result)
+          (when-not (close? [8.0 16.0] result)
+            (throw (ex-info "Metal Q4_0 verification failed" {:actual result})))
+          (accelerator/release! worker q4)))
       (finally (.close ^Closeable worker)))))

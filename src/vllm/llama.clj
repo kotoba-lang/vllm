@@ -193,14 +193,16 @@
                                                    :q4-k :q5-k :q6-k} (:type info))
                                     (let [{:keys [shape type buffer] :as view}
                                           (gguf/tensor-view model-file name)]
-                                      (if (and accelerator (= :q8-0 type)
+                                      (if (and accelerator (contains? #{:q8-0 :q4-0} type)
+                                               (satisfies? accelerator/IQuantizedMatrixAccelerator
+                                                           accelerator)
                                                (not= name "token_embd.weight"))
                                         (assoc view
                                                :accelerator accelerator
                                                :accelerator-handle
-                                               (accelerator/upload-q8! accelerator name
-                                                                       (first shape) (second shape)
-                                                                       buffer))
+                                               (accelerator/upload-quantized!
+                                                accelerator type name
+                                                (first shape) (second shape) buffer))
                                         view))
                                     (let [{:keys [shape data]}
                                           (gguf/read-tensor-f32 model-file name)]

@@ -51,6 +51,19 @@
                          :requests (mapv (fn [[handle x]]
                                            {:id handle :x (vec x)})
                                          requests)})))))
+  accelerator/IQuantizedMatrixAccelerator
+  (upload-quantized! [this type id rows columns bytes]
+    (when-not (contains? #{:q8-0 :q4-0} type)
+      (fail "unsupported Metal quantization" {:type type}))
+    (locking lock
+      (let [handle (str id "-" (UUID/randomUUID))
+            encoded (.encodeToString (Base64/getEncoder)
+                                     (if (instance? ByteBuffer bytes)
+                                       (buffer-bytes bytes)
+                                       ^bytes bytes))]
+        (exchange! this {:op (case type :q8-0 "upload-q8" :q4-0 "upload-q4")
+                         :id handle :rows rows :cols columns :data encoded})
+        handle)))
   Closeable
   (close [_]
     (try (.close writer) (catch Exception _))

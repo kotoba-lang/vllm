@@ -12,3 +12,7 @@
 (defprotocol IBatchedMatrixAccelerator
   (gemv-many! [accelerator requests]
     "Execute ordered `[handle f32-vector]` requests in one device submission."))
+
+(defprotocol IQuantizedMatrixAccelerator
+  (upload-quantized! [accelerator type id rows columns bytes]
+    "Upload a raw GGML quantized matrix of the named type."))
