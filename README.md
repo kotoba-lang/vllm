@@ -185,3 +185,18 @@ GPU execution, and real-model throughput/correctness evidence remain required.
 ```
 clojure -M:test
 ```
+
+Real GGUF verification is opt-in so the repository does not vendor model
+weights:
+
+```sh
+clojure -M:real-gguf-verify /models/stories15M-q8_0.gguf
+```
+
+The verified public fixture is `ggml-org/tiny-llamas/stories15M-q8_0.gguf`
+(26.7 MB, SHA256
+`2eda49203f2f044f3dddf29a7dd7cc861ef5a0340f518a19613d73ba6d9c06b6`).
+On Apple M4 the current reference executor generated eight greedy tokens from
+`Once upon a time` as `. He was very happy. He wanted`. This proves real GGUF
+correctness, not competitive throughput: the optimized mmap Q8 path still took
+about 9 seconds including JVM startup and peaked around 1.45 GB RSS.

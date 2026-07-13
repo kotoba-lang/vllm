@@ -180,6 +180,11 @@
                   (bit-shift-left fraction 13)))]
     (Float/intBitsToFloat (unchecked-int float-bits))))
 
+(defn decode-half
+  "Decode one IEEE-754 binary16 bit pattern to a JVM float."
+  [bits]
+  (half->float (bit-and 0xffff bits)))
+
 (defn decode-f32
   "Decode one GGML tensor payload into an unboxed JVM float array.
 

@@ -19,6 +19,50 @@
         (.position copy start) (.limit copy (+ start row-bytes))
         (gguf/decode-f32 type (.slice copy) columns)))))
 
+(defn- direct-quantized-dot [type ^ByteBuffer source row-start columns ^floats x]
+  (let [buffer source]
+    (.position buffer row-start)
+    (case type
+      :q8-0
+      (loop [base 0 sum 0.0]
+        (if (= base columns) sum
+          (let [scale (gguf/decode-half (.getShort buffer))]
+            (recur (+ base 32)
+                   (loop [i 0 sum sum]
+                     (if (= i 32) sum
+                       (recur (inc i)
+                              (+ sum (* scale (.get buffer) (aget x (+ base i)))))))))))
+      :q4-0
+      (loop [base 0 sum 0.0]
+        (if (= base columns) sum
+          (let [scale (gguf/decode-half (.getShort buffer))]
+            (recur (+ base 32)
+                   (loop [i 0 sum sum]
+                     (if (= i 16) sum
+                       (let [packed (bit-and 0xff (.get buffer))]
+                         (recur (inc i)
+                                (+ sum
+                                   (* scale (- (bit-and packed 15) 8)
+                                      (aget x (+ base i)))
+                                   (* scale (- (unsigned-bit-shift-right packed 4) 8)
+                                      (aget x (+ base i 16))))))))))))
+      :q4-1
+      (loop [base 0 sum 0.0]
+        (if (= base columns) sum
+          (let [scale (gguf/decode-half (.getShort buffer))
+                minimum (gguf/decode-half (.getShort buffer))]
+            (recur (+ base 32)
+                   (loop [i 0 sum sum]
+                     (if (= i 16) sum
+                       (let [packed (bit-and 0xff (.get buffer))]
+                         (recur (inc i)
+                                (+ sum
+                                   (* (+ minimum (* scale (bit-and packed 15)))
+                                      (aget x (+ base i)))
+                                   (* (+ minimum (* scale (unsigned-bit-shift-right packed 4)))
+                                      (aget x (+ base i 16))))))))))))
+      nil)))
+
 (defn matrix-vector
   "Multiply a dense or mmap-backed GGUF matrix by an F32 vector. Quantized
   matrices are decoded one row at a time, never expanded persistently."
@@ -26,21 +70,29 @@
   (let [[rows columns] shape]
     (when-not (= columns (alength x))
       (fail "matrix/vector shape mismatch" {:matrix shape :vector (alength x)}))
-    (let [out (float-array rows)]
+    (let [out (float-array rows)
+          direct-buffer (when (and buffer (contains? #{:q8-0 :q4-0 :q4-1} type))
+                          (doto (.duplicate ^ByteBuffer buffer)
+                            (.order java.nio.ByteOrder/LITTLE_ENDIAN)))]
       (dotimes [row rows]
-        (let [row-data (when-not data
+        (let [direct? (and buffer (contains? #{:q8-0 :q4-0 :q4-1} type))
+              row-data (when (and (not data) (not direct?))
                          (matrix-row {:shape shape :type type :buffer buffer
                                       :byte-count byte-count} row))
-              base (* row columns)]
+              base (* row columns)
+              row-byte-start (when buffer (* row (quot byte-count rows)))]
           (aset-float out row
-                      (float (loop [column 0 sum 0.0]
-                               (if (< column columns)
-                                 (recur (inc column)
-                                        (+ sum (* (if data
-                                                    (aget ^floats data (+ base column))
-                                                    (aget ^floats row-data column))
-                                                  (aget x column))))
-                                 sum))))))
+                      (float
+                       (if direct?
+                         (direct-quantized-dot type direct-buffer row-byte-start columns x)
+                         (loop [column 0 sum 0.0]
+                           (if (< column columns)
+                             (recur (inc column)
+                                    (+ sum (* (if data
+                                                (aget ^floats data (+ base column))
+                                                (aget ^floats row-data column))
+                                              (aget x column))))
+                             sum)))))))
       out)))
 
 (defn- add! [^floats target ^floats source]
