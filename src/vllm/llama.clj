@@ -1,7 +1,9 @@
 (ns vllm.llama
   "Reference Llama-family decoder with RoPE, GQA, SwiGLU, and mutable KV cache."
   (:require [vllm.gguf :as gguf])
-  (:import [java.nio ByteBuffer]))
+  (:import [java.nio ByteBuffer ByteOrder]
+           [java.util.function IntConsumer Supplier]
+           [java.util.stream IntStream]))
 
 (defn- fail [message data] (throw (ex-info (str "vllm.llama: " message) data)))
 (defn- farray [xs] (if (instance? (Class/forName "[F") xs) xs (float-array xs)))
@@ -71,11 +73,16 @@
     (when-not (= columns (alength x))
       (fail "matrix/vector shape mismatch" {:matrix shape :vector (alength x)}))
     (let [out (float-array rows)
-          direct-buffer (when (and buffer (contains? #{:q8-0 :q4-0 :q4-1} type))
-                          (doto (.duplicate ^ByteBuffer buffer)
-                            (.order java.nio.ByteOrder/LITTLE_ENDIAN)))]
-      (dotimes [row rows]
-        (let [direct? (and buffer (contains? #{:q8-0 :q4-0 :q4-1} type))
+          direct? (and buffer (contains? #{:q8-0 :q4-0 :q4-1} type))
+          thread-buffer
+          (when direct?
+            (ThreadLocal/withInitial
+             (reify Supplier
+               (get [_] (doto (.duplicate ^ByteBuffer buffer)
+                          (.order ByteOrder/LITTLE_ENDIAN))))))
+          compute-row!
+          (fn [row]
+            (let [direct-buffer (when direct? (.get ^ThreadLocal thread-buffer))
               row-data (when (and (not data) (not direct?))
                          (matrix-row {:shape shape :type type :buffer buffer
                                       :byte-count byte-count} row))
@@ -92,7 +99,11 @@
                                                 (aget ^floats data (+ base column))
                                                 (aget ^floats row-data column))
                                               (aget x column))))
-                             sum)))))))
+                             sum)))))))]
+      (if (>= rows 1024)
+        (.forEach (.parallel (IntStream/range 0 rows))
+                  (reify IntConsumer (accept [_ row] (compute-row! row))))
+        (dotimes [row rows] (compute-row! row)))
       out)))
 
 (defn- add! [^floats target ^floats source]

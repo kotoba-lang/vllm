@@ -13,4 +13,5 @@
          :exec-fn cognitect.test-runner.api/test}
   :real-gguf-verify
   {:extra-paths ["test"]
+   :jvm-opts ["-Xms128m" "-Xmx512m"]
    :main-opts ["-m" "vllm.real-gguf-verify"]}}}
