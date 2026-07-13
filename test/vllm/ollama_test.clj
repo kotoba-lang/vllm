@@ -43,3 +43,8 @@
                                         {:method :delete :path "/api/delete"
                                          :body {"name" "tiny"}}))))
     (is (= {:closed true} (ollama/close! runtime)))))
+
+(deftest runtime-retains-the-configured-matrix-accelerator
+  (let [backend (Object.) runtime (ollama/runtime {:accelerator backend})]
+    (is (identical? backend (:accelerator runtime)))
+    (ollama/close! runtime)))

@@ -11,18 +11,20 @@
            [java.time Instant]))
 
 (declare close!)
-(defrecord OllamaRuntime [models scheduler store]
+(defrecord OllamaRuntime [models scheduler store accelerator]
   Closeable
   (close [this] (close! this)))
 (defrecord GGUFEngine [name path file model tokenizer]
   Closeable
-  (close [_] (.close ^Closeable file)))
+  (close [_]
+    (llama/close-model! model)
+    (.close ^Closeable file)))
 
 (defn runtime
   ([] (runtime {}))
-  ([{:keys [model-store] :as options}]
+  ([{:keys [model-store accelerator] :as options}]
    (->OllamaRuntime (atom {}) (scheduler/scheduler options)
-                    (when model-store (manifest/store model-store)))))
+                    (when model-store (manifest/store model-store)) accelerator)))
 
 (defn register!
   "Register an engine map/record. It must expose `:name` and `:generate`, where
@@ -46,10 +48,11 @@
 
 (defn load-gguf-engine
   "Open a local Llama GGUF and return a registry-ready engine."
-  [name path]
+  ([name path] (load-gguf-engine name path {}))
+  ([name path {:keys [accelerator]}]
   (let [file (gguf/open-file path)]
     (try
-      (let [model (llama/load-gguf file)
+      (let [model (llama/load-gguf file {:accelerator accelerator})
             tok (tokenizer/from-metadata (:metadata file))]
         (map->GGUFEngine
          {:name name :path (str path) :file file :model model :tokenizer tok
@@ -68,10 +71,10 @@
                                                   (on-fragment (tokenizer/decode tok [id]))))))]
               (assoc generated :text (tokenizer/decode tok (:tokens generated))
                      :prompt-tokens (count prompt-ids))))}))
-      (catch Throwable error (.close ^Closeable file) (throw error)))))
+      (catch Throwable error (.close ^Closeable file) (throw error))))))
 
 (defn load! [runtime name path]
-  (register! runtime (load-gguf-engine name path)))
+  (register! runtime (load-gguf-engine name path {:accelerator (:accelerator runtime)})))
 
 (defn install!
   "Import a GGUF into the configured content-addressed store and load it."
