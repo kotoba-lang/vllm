@@ -1,0 +1,136 @@
+(ns vllm.ollama
+  "Embedded Ollama-compatible model registry and API handler."
+  (:require [clojure.string :as str]
+            [vllm.generate :as generate]
+            [vllm.gguf :as gguf]
+            [vllm.llama :as llama]
+            [vllm.tokenizer :as tokenizer])
+  (:import [java.io Closeable]
+           [java.time Instant]))
+
+(defrecord OllamaRuntime [models])
+(defrecord GGUFEngine [name path file model tokenizer]
+  Closeable
+  (close [_] (.close ^Closeable file)))
+
+(defn runtime [] (->OllamaRuntime (atom {})))
+
+(defn register!
+  "Register an engine map/record. It must expose `:name` and `:generate`, where
+  generate accepts `[prompt options on-fragment]` and returns a result map."
+  [runtime engine]
+  (when-not (and (string? (:name engine)) (fn? (:generate engine)))
+    (throw (ex-info "Ollama engine requires :name and :generate" {:engine (keys engine)})))
+  (swap! (:models runtime) assoc (:name engine) engine)
+  engine)
+
+(defn unregister! [runtime name]
+  (when-let [engine (get @(:models runtime) name)]
+    (swap! (:models runtime) dissoc name)
+    (when (instance? Closeable engine) (.close ^Closeable engine))
+    true))
+
+(defn close! [runtime]
+  (doseq [name (keys @(:models runtime))] (unregister! runtime name))
+  {:closed true})
+
+(defn load-gguf-engine
+  "Open a local Llama GGUF and return a registry-ready engine."
+  [name path]
+  (let [file (gguf/open-file path)]
+    (try
+      (let [model (llama/load-gguf file)
+            tok (tokenizer/from-metadata (:metadata file))]
+        (map->GGUFEngine
+         {:name name :path (str path) :file file :model model :tokenizer tok
+          :generate
+          (fn [prompt options on-fragment]
+            (let [prompt-ids (tokenizer/encode tok prompt)
+                  state (llama/new-state model)
+                  generated (generate/generate-tokens
+                             model state prompt-ids
+                             (assoc options
+                                    :eos-token-ids (cond-> #{}
+                                                     (:eos-id tok) (conj (:eos-id tok)))
+                                    :on-token (fn [id]
+                                                (when on-fragment
+                                                  (on-fragment (tokenizer/decode tok [id]))))))]
+              (assoc generated :text (tokenizer/decode tok (:tokens generated))
+                     :prompt-tokens (count prompt-ids))))}))
+      (catch Throwable error (.close ^Closeable file) (throw error)))))
+
+(defn load! [runtime name path]
+  (register! runtime (load-gguf-engine name path)))
+
+(defn- message-prompt [messages]
+  ;; A model-specific tokenizer.chat_template executor will replace this
+  ;; conservative fallback. Role boundaries are explicit and deterministic.
+  (str (str/join "\n" (map (fn [{:strs [role content]}]
+                              (str (or role "user") ": " (or content "")))
+                            messages))
+       "\nassistant: "))
+
+(defn- options [body]
+  (let [wire (or (get body "options") {})]
+    {:max-tokens (long (or (get body "num_predict") (get wire "num_predict") 128))
+     :seed (long (or (get body "seed") (get wire "seed") 0))
+     :temperature (double (or (get wire "temperature") 0.8))
+     :top-k (long (or (get wire "top_k") 40))
+     :top-p (double (or (get wire "top_p") 0.95))
+     :repetition-penalty (double (or (get wire "repeat_penalty") 1.0))}))
+
+(defn- error-response [status message]
+  {:status status :body {"error" message}})
+
+(defn- run-generation [runtime body prompt chat? emit]
+  (let [model-name (get body "model") engine (get @(:models runtime) model-name)]
+    (if-not engine
+      (error-response 404 (str "model '" model-name "' not found"))
+      (let [started (System/nanoTime)
+            result ((:generate engine) prompt (options body)
+                    (when emit
+                      (fn [fragment]
+                        (emit (cond-> {"model" model-name "done" false}
+                                chat? (assoc "message" {"role" "assistant"
+                                                        "content" fragment})
+                                (not chat?) (assoc "response" fragment))))))
+            elapsed (- (System/nanoTime) started)
+            response (cond->
+                      {"model" model-name "created_at" (str (Instant/now))
+                       "done" true "done_reason" (name (:finish-reason result))
+                       "prompt_eval_count" (or (:prompt-tokens result) 0)
+                       "eval_count" (count (:tokens result))
+                       "total_duration" elapsed}
+                       chat? (assoc "message" {"role" "assistant"
+                                               "content" (:text result)})
+                       (not chat?) (assoc "response" (:text result)))]
+        (when emit (emit response))
+        {:status 200 :body response}))))
+
+(defn handle
+  "Handle an Ollama-style request map:
+  `{:method :get|:post :path api-path :body string-keyed-map :emit fn?}`.
+  `:emit` receives streaming chunk maps; the returned final response is always
+  available for non-streaming hosts and audit logs."
+  [runtime {:keys [method path body emit]}]
+  (case [method path]
+    [:get "/api/tags"]
+    {:status 200
+     :body {"models" (mapv (fn [[name engine]]
+                              {"name" name "model" name
+                               "modified_at" (str (Instant/now))
+                               "size" (when-let [path (:path engine)]
+                                        (.length (java.io.File. path)))
+                               "details" {"format" "gguf"
+                                          "family" "llama"}})
+                            (sort-by key @(:models runtime)))}}
+
+    [:post "/api/generate"]
+    (run-generation runtime body (or (get body "prompt") "") false
+                    (when-not (false? (get body "stream" true)) emit))
+
+    [:post "/api/chat"]
+    (run-generation runtime body (message-prompt (or (get body "messages") [])) true
+                    (when-not (false? (get body "stream" true)) emit))
+
+    (error-response 404 "endpoint not found")))

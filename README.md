@@ -145,9 +145,31 @@ explicitly until their block kernels land.
    :token-embedding (gguf/tensor-info model "token_embd.weight")})
 ```
 
-This does not yet make vllm-clj an Ollama replacement: tokenizer execution,
-quantized matrix kernels, Transformer/KV-cache generation, model lifecycle,
-and the Ollama HTTP surface remain explicit required work.
+`vllm.llama` now executes the Llama decoder architecture with RMSNorm, RoPE,
+grouped-query causal attention, SwiGLU, residuals, and a per-layer KV cache.
+`vllm.tokenizer` reads the embedded Llama/SentencePiece vocabulary and performs
+maximum-score segmentation; `vllm.generate` provides seeded temperature,
+top-k/top-p, repetition-penalty sampling and incremental token callbacks.
+
+`vllm.ollama` ties those layers into a closeable local model registry and pure
+request handler for `GET /api/tags`, `POST /api/generate`, and `POST /api/chat`.
+The handler returns Ring-like response maps and optionally emits Ollama-shaped
+stream chunks, allowing http-kit, Jetty, or another host to expose the wire.
+
+```clojure
+(require '[vllm.ollama :as ollama])
+
+(def local (ollama/runtime))
+(ollama/load! local "tiny" "/models/tiny.gguf")
+(ollama/handle local {:method :post :path "/api/generate"
+                      :body {"model" "tiny" "prompt" "Hello"
+                             "stream" false}})
+```
+
+This is still not Ollama parity: common Q4_K/Q5_K/Q6_K kernels, exact chat
+template execution, concurrent/batched scheduling, persistent model manifests,
+real HTTP serving, GPU execution, and real-model throughput/correctness evidence
+remain required.
 
 ## Test
 
