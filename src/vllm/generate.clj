@@ -68,3 +68,61 @@
           (if (contains? (set eos-token-ids) token)
             {:tokens generated :finish-reason :stop :state state}
             (recur token generated (conj history token))))))))
+
+(defn batch-generate-tokens
+  "Continuously batch a cohort of requests with different prompt lengths and
+  generation limits. Each request is `{:state :prompt-ids :options}`. Finished
+  sequences leave the active batch while the remaining sequences continue."
+  [model requests & [{:keys [step-batch-fn] :or {step-batch-fn llama/step-batch!}}]]
+  (when-not (seq requests)
+    (throw (ex-info "batch generation requires at least one request" {})))
+  (let [entries
+        (mapv (fn [{:keys [state prompt-ids options]}]
+                (when-not (seq prompt-ids)
+                  (throw (ex-info "generation requires at least one prompt token" {})))
+                {:state state :pending (vec (butlast prompt-ids)) :input (last prompt-ids)
+                 :history (vec prompt-ids) :generated [] :done? false
+                 :finish-reason nil :options options
+                 :random (Random. (long (get options :seed 0)))}) requests)
+        entries
+        (loop [entries entries]
+          (let [active (keep-indexed #(when (seq (:pending %2)) %1) entries)]
+            (if (empty? active) entries
+              (let [states (mapv #(get-in entries [% :state]) active)
+                    tokens (mapv #(first (get-in entries [% :pending])) active)]
+                (step-batch-fn model states tokens)
+                (recur (reduce (fn [result index]
+                                 (update-in result [index :pending] #(vec (rest %))))
+                               entries active))))))]
+    (loop [entries entries]
+      (let [active (keep-indexed
+                    (fn [index entry]
+                      (when (and (not (:done? entry))
+                                 (< (count (:generated entry))
+                                    (long (get-in entry [:options :max-tokens] 128))))
+                        index)) entries)]
+        (if (empty? active)
+          (mapv (fn [{:keys [state generated finish-reason]}]
+                  {:tokens generated :finish-reason (or finish-reason :length)
+                   :state state}) entries)
+          (let [results (step-batch-fn model
+                                       (mapv #(get-in entries [% :state]) active)
+                                       (mapv #(get-in entries [% :input]) active))
+                entries
+                (reduce
+                 (fn [current [index result]]
+                   (let [entry (nth current index) options (:options entry)
+                         token (sample-token (:logits result) (:history entry)
+                                             (:random entry) options)
+                         generated (conj (:generated entry) token)
+                         stopped? (contains? (set (get options :eos-token-ids #{})) token)
+                         reached? (>= (count generated) (long (get options :max-tokens 128)))
+                         on-token (:on-token options)]
+                     (when on-token (on-token token))
+                     (assoc current index
+                            (assoc entry :input token :generated generated
+                                   :history (conj (:history entry) token)
+                                   :done? (or stopped? reached?)
+                                   :finish-reason (cond stopped? :stop reached? :length)))))
+                 entries (map vector active results))]
+            (recur entries)))))))

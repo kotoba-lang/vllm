@@ -70,7 +70,27 @@
                                                 (when on-fragment
                                                   (on-fragment (tokenizer/decode tok [id]))))))]
               (assoc generated :text (tokenizer/decode tok (:tokens generated))
-                     :prompt-tokens (count prompt-ids))))}))
+                     :prompt-tokens (count prompt-ids))))
+          :generate-batch
+          (fn [requests]
+            (let [prepared
+                  (mapv (fn [{:keys [prompt options on-fragment]}]
+                          (let [prompt-ids (tokenizer/encode tok prompt)]
+                            {:prompt-count (count prompt-ids)
+                             :state (llama/new-state model) :prompt-ids prompt-ids
+                             :options (assoc options
+                                             :eos-token-ids (cond-> #{}
+                                                              (:eos-id tok) (conj (:eos-id tok)))
+                                             :on-token (fn [id]
+                                                         (when on-fragment
+                                                           (on-fragment
+                                                            (tokenizer/decode tok [id])))))}))
+                        requests)
+                  generated (generate/batch-generate-tokens model prepared)]
+              (mapv (fn [request result]
+                      (assoc result :text (tokenizer/decode tok (:tokens result))
+                             :prompt-tokens (:prompt-count request)))
+                    prepared generated)))}))
       (catch Throwable error (.close ^Closeable file) (throw error))))))
 
 (defn load! [runtime name path]
@@ -123,15 +143,20 @@
                      ((or (:chat-prompt engine) message-prompt) prompt)
                      prompt)
             started (System/nanoTime)
-            result (scheduler/run!
-                    (:scheduler runtime) model-name
-                    #((:generate engine) prompt (options body)
-                      (when emit
-                        (fn [fragment]
-                          (emit (cond-> {"model" model-name "done" false}
-                                  chat? (assoc "message" {"role" "assistant"
-                                                          "content" fragment})
-                                  (not chat?) (assoc "response" fragment)))))))
+            on-fragment (when emit
+                          (fn [fragment]
+                            (emit (cond-> {"model" model-name "done" false}
+                                    chat? (assoc "message" {"role" "assistant"
+                                                            "content" fragment})
+                                    (not chat?) (assoc "response" fragment)))))
+            result (if-let [batch-generate (:generate-batch engine)]
+                     (scheduler/run-batch!
+                      (:scheduler runtime) model-name
+                      {:prompt prompt :options (options body) :on-fragment on-fragment}
+                      batch-generate)
+                     (scheduler/run!
+                      (:scheduler runtime) model-name
+                      #((:generate engine) prompt (options body) on-fragment)))
             elapsed (- (System/nanoTime) started)
             response (cond->
                       {"model" model-name "created_at" (str (Instant/now))

@@ -21,3 +21,17 @@
           (is (= 3 (:submitted stats)))
           (is (= 3 (:completed stats)))
           (is (= 1 (:rejected stats))))))))
+
+(deftest continuous-batcher-coalesces-ordered-model-requests
+  (with-open [s (scheduler/scheduler {:workers 1 :queue-capacity 8
+                                      :batch-window-ms 20 :max-batch-size 4})]
+    (let [cohorts (atom [])
+          execute (fn [payloads]
+                    (swap! cohorts conj payloads)
+                    (mapv #(* 10 %) payloads))
+          first-result (scheduler/submit-batch! s "m" 1 execute)
+          second-result (scheduler/submit-batch! s "m" 2 execute)]
+      (is (= 10 (.get first-result)))
+      (is (= 20 (.get second-result)))
+      (is (= [[1 2]] @cohorts))
+      (is (= 2 (:completed (scheduler/stats s)))))))

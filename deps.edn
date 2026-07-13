@@ -22,4 +22,12 @@
   :real-metal-verify
   {:extra-paths ["test"]
    :jvm-opts ["-Xms128m" "-Xmx512m"]
-   :main-opts ["-m" "vllm.real-metal-verify"]}}}
+   :main-opts ["-m" "vllm.real-metal-verify"]}
+  :real-batch-verify
+  {:extra-paths ["test"]
+   :jvm-opts ["-Xms128m" "-Xmx512m"]
+   :main-opts ["-m" "vllm.real-batch-verify"]}
+  :real-continuous-verify
+  {:extra-paths ["test"]
+   :jvm-opts ["-Xms128m" "-Xmx512m"]
+   :main-opts ["-m" "vllm.real-continuous-verify"]}}}

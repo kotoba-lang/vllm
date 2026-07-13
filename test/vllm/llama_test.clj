@@ -72,4 +72,12 @@
     (is (every? #(Float/isFinite %) (vec (:logits second-step))))
     (is (not= (vec (:logits first-step)) (vec (:logits second-step))))
     (is (some #(not (zero? %)) (vec (first (:keys state)))))
-    (is (some #(not (zero? %)) (vec (first (:values state)))))))
+    (is (some #(not (zero? %)) (vec (first (:values state)))))
+    (let [batch-states [(llama/new-state model) (llama/new-state model)]
+          batched (llama/step-batch! model batch-states [1 2])
+          references (mapv (fn [token]
+                             (llama/step! model (llama/new-state model) token)) [1 2])]
+      (is (= (mapv :position references) (mapv :position batched)))
+      (is (= (mapv #(vec (:logits %)) references)
+             (mapv #(vec (:logits %)) batched)))
+      (is (= [1 1] (mapv #(deref (:position %)) batch-states))))))

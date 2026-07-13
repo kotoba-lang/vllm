@@ -17,3 +17,25 @@
     (is (= :stop (:finish-reason result)))
     (is (= [2 3] @streamed))
     (is (= 3 @position))))
+
+(deftest continuous-batch-handles-variable-prompts-and-finished-sequences
+  (let [batch-sizes (atom [])
+        step-batch (fn [_ states tokens]
+                     (swap! batch-sizes conj (count states))
+                     (mapv (fn [state token]
+                             (swap! state inc)
+                             {:logits (float-array (case token
+                                                    1 [0 0 5 0]
+                                                    2 [0 0 0 5]
+                                                    [5 0 0 0]))}) states tokens))
+        states [(atom 0) (atom 0)]
+        results (generate/batch-generate-tokens
+                 nil [{:state (first states) :prompt-ids [0 1]
+                       :options {:max-tokens 8 :temperature 0 :eos-token-ids #{3}}}
+                      {:state (second states) :prompt-ids [1]
+                       :options {:max-tokens 1 :temperature 0}}]
+                 {:step-batch-fn step-batch})]
+    (is (= [[2 3] [2]] (mapv :tokens results)))
+    (is (= [:stop :length] (mapv :finish-reason results)))
+    (is (= [3 1] (mapv deref states)))
+    (is (= [1 2 1] @batch-sizes))))

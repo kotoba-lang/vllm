@@ -120,6 +120,27 @@
                                       [(:accelerator-handle matrix) x]) matrices))
       (mapv #(matrix-vector % x) matrices))))
 
+(defn- matrix-vector-batch [matrix inputs]
+  (let [backend (:accelerator matrix)]
+    (if (and (:accelerator-handle matrix) backend
+             (satisfies? accelerator/IBatchedMatrixAccelerator backend))
+      (accelerator/gemv-many! backend
+                              (mapv (fn [x] [(:accelerator-handle matrix) x]) inputs))
+      (mapv #(matrix-vector matrix %) inputs))))
+
+(defn- projection-batch [matrices inputs]
+  (let [backend (:accelerator (first matrices))]
+    (if (and backend (satisfies? accelerator/IBatchedMatrixAccelerator backend)
+             (every? #(and (:accelerator-handle %)
+                           (identical? backend (:accelerator %))) matrices))
+      (let [width (count matrices)
+            outputs (accelerator/gemv-many!
+                     backend
+                     (vec (for [x inputs matrix matrices]
+                            [(:accelerator-handle matrix) x])))]
+        (mapv vec (partition width outputs)))
+      (mapv (fn [x] (mapv #(matrix-vector % x) matrices)) inputs))))
+
 (defn- add! [^floats target ^floats source]
   (dotimes [i (alength target)]
     (aset-float target i (float (+ (aget target i) (aget source i)))))
@@ -248,14 +269,9 @@
     (when-not (<= 0 token-id (dec vocab)) (fail "token ID out of range" {:token token-id}))
     (matrix-row embedding token-id)))
 
-(defn- attention [model state layer position ^floats normalized]
+(defn- attend-projected [model state layer position q k v]
   (let [{:keys [head-count head-count-kv head-dim rope-dimension-count rope-freq-base]}
         (:config model)
-        prefix (str "blk." layer ".")
-        [q k v] (matrix-vectors [(tensor! model (str prefix "attn_q.weight"))
-                                 (tensor! model (str prefix "attn_k.weight"))
-                                 (tensor! model (str prefix "attn_v.weight"))]
-                                normalized)
         _ (rope! q head-count head-dim position (or rope-freq-base 10000.0)
                  rope-dimension-count)
         _ (rope! k head-count-kv head-dim position (or rope-freq-base 10000.0)
@@ -293,7 +309,16 @@
                   (aset-float attended index
                               (float (+ (aget attended index)
                                         (* probability (aget value-cache (+ v-base i)))))))))))))
-    (matrix-vector (tensor! model (str prefix "attn_output.weight")) attended)))
+    attended))
+
+(defn- attention [model state layer position ^floats normalized]
+  (let [prefix (str "blk." layer ".")
+        [q k v] (matrix-vectors [(tensor! model (str prefix "attn_q.weight"))
+                                 (tensor! model (str prefix "attn_k.weight"))
+                                 (tensor! model (str prefix "attn_v.weight"))]
+                                normalized)]
+    (matrix-vector (tensor! model (str prefix "attn_output.weight"))
+                   (attend-projected model state layer position q k v))))
 
 (defn step!
   "Consume one token at the state's current position, mutate its KV cache, and
@@ -329,3 +354,58 @@
           logits (matrix-vector output-weight final)]
       (swap! (:position state) inc)
       {:logits logits :position position})))
+
+(defn step-batch!
+  "Consume one token for every active sequence. Projection work for all
+  sequences is submitted together when the accelerator supports batching."
+  [model states token-ids]
+  (when-not (and (seq states) (= (count states) (count token-ids)))
+    (fail "batch requires one token per state"
+          {:states (count states) :tokens (count token-ids)}))
+  (let [{:keys [block-count context-length rms-epsilon]} (:config model)
+        positions (mapv #(deref (:position %)) states)]
+    (when-let [position (some #(when (>= % context-length) %) positions)]
+      (fail "KV cache context is full" {:position position :context-length context-length}))
+    (let [hidden
+          (loop [layer 0 hidden (mapv #(embedding-row model %2) states token-ids)]
+            (if (= layer block-count) hidden
+              (let [prefix (str "blk." layer ".")
+                    attn-norm (tensor! model (str prefix "attn_norm.weight"))
+                    normalized (mapv #(rms-norm % attn-norm (or rms-epsilon 1.0e-5)) hidden)
+                    projections (projection-batch
+                                 [(tensor! model (str prefix "attn_q.weight"))
+                                  (tensor! model (str prefix "attn_k.weight"))
+                                  (tensor! model (str prefix "attn_v.weight"))]
+                                 normalized)
+                    attended (mapv (fn [state position [q k v]]
+                                     (attend-projected model state layer position q k v))
+                                   states positions projections)
+                    attention-output (matrix-vector-batch
+                                      (tensor! model (str prefix "attn_output.weight"))
+                                      attended)
+                    residuals (mapv add! hidden attention-output)
+                    ffn-norm (tensor! model (str prefix "ffn_norm.weight"))
+                    ffn-inputs (mapv #(rms-norm % ffn-norm (or rms-epsilon 1.0e-5))
+                                     residuals)
+                    gate-ups (projection-batch
+                              [(tensor! model (str prefix "ffn_gate.weight"))
+                               (tensor! model (str prefix "ffn_up.weight"))]
+                              ffn-inputs)
+                    activated (mapv (fn [[gate up]]
+                                      (let [out (float-array (alength ^floats gate))]
+                                        (dotimes [i (alength ^floats gate)]
+                                          (aset-float out i
+                                                      (float (* (silu (aget ^floats gate i))
+                                                                (aget ^floats up i)))))
+                                        out)) gate-ups)
+                    down (matrix-vector-batch
+                          (tensor! model (str prefix "ffn_down.weight")) activated)]
+                (recur (inc layer) (mapv add! residuals down)))))
+          output-norm (tensor! model "output_norm.weight")
+          final (mapv #(rms-norm % output-norm (or rms-epsilon 1.0e-5)) hidden)
+          output-weight (try (tensor! model "output.weight")
+                             (catch clojure.lang.ExceptionInfo _
+                               (tensor! model "token_embd.weight")))
+          logits (matrix-vector-batch output-weight final)]
+      (doseq [state states] (swap! (:position state) inc))
+      (mapv (fn [position values] {:logits values :position position}) positions logits))))
