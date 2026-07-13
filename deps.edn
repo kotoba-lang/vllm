@@ -1,5 +1,6 @@
 {:paths ["src"]
- ;; Zero third-party runtime deps — every namespace is portable .cljc (JVM, CLJS, SCI).
+ ;; Zero third-party runtime deps. Request/wire namespaces are portable .cljc;
+ ;; the embedded GGUF reader is JVM-specific.
  ;; A vLLM inference request IS data (:vllm/* maps); the library renders it to the
  ;; OpenAI/vLLM wire shape (string-keyed maps) and normalizes responses. The actual
  ;; HTTP + JSON (de)serialization is a host-injected ITransport port.

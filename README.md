@@ -8,8 +8,8 @@ response parser. Like its sibling libraries, vllm-clj treats the request as data
 — generated, diffed, versioned, logged, and stored (Datomic / kotoba) like any
 other EDN value — and leaves the socket to the host.
 
-- **Zero third-party runtime deps**, every namespace is portable `.cljc`
-  (JVM, ClojureScript, SCI).
+- **Zero third-party runtime deps.** Request/wire namespaces remain portable
+  `.cljc` (JVM, ClojureScript, SCI); the local GGUF reader is JVM-specific.
 - **Don't build JSON text.** vllm-clj renders requests to *string-keyed Clojure
   maps* and parses *string-keyed* responses; the host transport does the actual
   HTTP and JSON (de)serialization (clj-http, http-kit, hato, `js/fetch`, …).
@@ -124,6 +124,28 @@ never touching a socket itself:
 Validation short-circuits before the wire (`{:vllm/error :validation …}`); a
 non-2xx response becomes `{:vllm/error :http :vllm/status …}`. With the default
 `ports/no-transport`, vllm-clj does no I/O and `complete` throws — by design.
+
+## Embedded GGUF foundation (`vllm.gguf`)
+
+The JVM runtime now has a validated GGUF v3 reader as the first local-inference
+layer. `open-file` parses scalar, string, nested-array metadata and the tensor
+catalog, validates alignment/block sizes/file windows, and leaves model payloads
+on disk. `read-tensor-bytes` reads only one requested tensor window. Catalog
+support covers F32/F16/BF16, integer tensors, and the common Q4/Q5/Q8/K-block
+encodings; dequantization and Transformer execution are the next layer.
+
+```clojure
+(require '[vllm.gguf :as gguf])
+
+(with-open [model (gguf/open-file "/models/model.gguf")]
+  {:architecture (get (:metadata model) "general.architecture")
+   :tensors (gguf/tensor-names model)
+   :token-embedding (gguf/tensor-info model "token_embd.weight")})
+```
+
+This does not yet make vllm-clj an Ollama replacement: tokenizer execution,
+quantized matrix kernels, Transformer/KV-cache generation, model lifecycle,
+and the Ollama HTTP surface remain explicit required work.
 
 ## Test
 
