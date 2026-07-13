@@ -40,6 +40,7 @@
                     :texts (mapv #(get % "response") bodies)
                     :prompt-tokens prompt-tokens :sequences 2
                     :metal-submissions (:submissions stats)
+                    :remaining-kv-handles (:kv-handles stats)
                     :cohorts (:recent-batch-sizes scheduler-stats)
                     :expected-shared-submissions (* 24 prompt-tokens)
                     :seconds (/ (- (System/nanoTime) started) 1.0e9)}]
@@ -47,5 +48,6 @@
         (when-not (and (= [200 200] (:statuses report))
                        (= 1 (count (distinct (:texts report))))
                        (= (:expected-shared-submissions report)
-                          (:metal-submissions report)))
+                          (:metal-submissions report))
+                       (zero? (:remaining-kv-handles report)))
           (throw (ex-info "continuous HTTP batch verification failed" report)))))))

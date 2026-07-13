@@ -16,3 +16,8 @@
 (defprotocol IQuantizedMatrixAccelerator
   (upload-quantized! [accelerator type id rows columns bytes]
     "Upload a raw GGML quantized matrix of the named type."))
+
+(defprotocol IAttentionAccelerator
+  (create-kv! [accelerator id layers context kv-heads head-dim])
+  (attention! [accelerator handle layer position heads q k v])
+  (release-kv! [accelerator handle]))

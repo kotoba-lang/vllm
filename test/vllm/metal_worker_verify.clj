@@ -121,5 +121,23 @@
             (when-not (close? [expected] result)
               (throw (ex-info "Metal K-quant verification failed"
                               {:type type :actual result})))
-            (accelerator/release! worker handle))))
+            (accelerator/release! worker handle)))
+        (let [kv (accelerator/create-kv! worker "kv" 1 4 1 2)
+              first-result (vec (accelerator/attention! worker kv 0 0 2
+                                                         [1 0 0 1] [1 0] [2 3]))
+              second-result (vec (accelerator/attention! worker kv 0 1 2
+                                                          [1 0 0 1] [0 1] [4 5]))
+              high (/ (Math/exp (/ 1.0 (Math/sqrt 2.0)))
+                      (+ 1.0 (Math/exp (/ 1.0 (Math/sqrt 2.0)))))
+              expected-second [(+ (* high 2) (* (- 1 high) 4))
+                               (+ (* high 3) (* (- 1 high) 5))
+                               (+ (* (- 1 high) 2) (* high 4))
+                               (+ (* (- 1 high) 3) (* high 5))]]
+          (println "Metal persistent KV attention:" first-result second-result)
+          (when-not (and (close? [2 3 2 3] first-result)
+                         (close? expected-second second-result))
+            (throw (ex-info "Metal KV attention verification failed" {})))
+          (accelerator/release-kv! worker kv)
+          (when-not (zero? (:kv-handles (metal/stats worker)))
+            (throw (ex-info "Metal worker leaked KV cache" {})))))
       (finally (.close ^Closeable worker)))))

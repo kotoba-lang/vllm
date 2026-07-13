@@ -253,10 +253,19 @@
 
 (defn new-state [model]
   (let [{:keys [block-count context-length head-count-kv head-dim]} (:config model)
-        size (* context-length head-count-kv head-dim)]
-    {:position (atom 0)
-     :keys (mapv (fn [_] (float-array size)) (range block-count))
-     :values (mapv (fn [_] (float-array size)) (range block-count))}))
+        backend (:accelerator model) size (* context-length head-count-kv head-dim)]
+    (if (and backend (satisfies? accelerator/IAttentionAccelerator backend))
+      {:position (atom 0) :accelerator backend
+       :kv-handle (accelerator/create-kv! backend "state" block-count context-length
+                                           head-count-kv head-dim)}
+      {:position (atom 0)
+       :keys (mapv (fn [_] (float-array size)) (range block-count))
+       :values (mapv (fn [_] (float-array size)) (range block-count))})))
+
+(defn close-state! [state]
+  (when-let [handle (:kv-handle state)]
+    (accelerator/release-kv! (:accelerator state) handle))
+  nil)
 
 (defn- tensor! [model name]
   (let [source (:tensors model)]
@@ -275,41 +284,43 @@
         _ (rope! q head-count head-dim position (or rope-freq-base 10000.0)
                  rope-dimension-count)
         _ (rope! k head-count-kv head-dim position (or rope-freq-base 10000.0)
-                 rope-dimension-count)
-        ^floats key-cache (nth (:keys state) layer)
-        ^floats value-cache (nth (:values state) layer)
-        cache-width (* head-count-kv head-dim)
-        cache-base (* position cache-width)
-        _ (System/arraycopy k 0 key-cache cache-base cache-width)
-        _ (System/arraycopy v 0 value-cache cache-base cache-width)
-        grouped (quot head-count head-count-kv)
-        attended (float-array (* head-count head-dim))]
-    (dotimes [head head-count]
-      (let [kv-head (quot head grouped) q-base (* head head-dim)
-            scores (double-array (inc position))]
-        (dotimes [past (inc position)]
-          (let [k-base (+ (* past cache-width) (* kv-head head-dim))]
-            (aset-double scores past
-                         (/ (loop [i 0 sum 0.0]
-                              (if (< i head-dim)
-                                (recur (inc i) (+ sum (* (aget q (+ q-base i))
-                                                          (aget key-cache (+ k-base i)))))
-                                sum))
-                            (Math/sqrt head-dim)))))
-        (let [maximum (reduce max (seq scores))
-              denominator (loop [i 0 sum 0.0]
-                            (if (< i (alength scores))
-                              (recur (inc i) (+ sum (Math/exp (- (aget scores i) maximum))))
-                              sum))]
-          (dotimes [past (inc position)]
-            (let [probability (/ (Math/exp (- (aget scores past) maximum)) denominator)
-                  v-base (+ (* past cache-width) (* kv-head head-dim))]
-              (dotimes [i head-dim]
-                (let [index (+ q-base i)]
-                  (aset-float attended index
-                              (float (+ (aget attended index)
-                                        (* probability (aget value-cache (+ v-base i)))))))))))))
-    attended))
+                 rope-dimension-count)]
+    (if-let [handle (:kv-handle state)]
+      (accelerator/attention! (:accelerator state) handle layer position head-count q k v)
+      (let [^floats key-cache (nth (:keys state) layer)
+            ^floats value-cache (nth (:values state) layer)
+            cache-width (* head-count-kv head-dim) cache-base (* position cache-width)
+            _ (System/arraycopy k 0 key-cache cache-base cache-width)
+            _ (System/arraycopy v 0 value-cache cache-base cache-width)
+            grouped (quot head-count head-count-kv)
+            attended (float-array (* head-count head-dim))]
+        (dotimes [head head-count]
+          (let [kv-head (quot head grouped) q-base (* head head-dim)
+                scores (double-array (inc position))]
+            (dotimes [past (inc position)]
+              (let [k-base (+ (* past cache-width) (* kv-head head-dim))]
+                (aset-double scores past
+                             (/ (loop [i 0 sum 0.0]
+                                  (if (< i head-dim)
+                                    (recur (inc i) (+ sum (* (aget q (+ q-base i))
+                                                              (aget key-cache (+ k-base i)))))
+                                    sum))
+                                (Math/sqrt head-dim)))))
+            (let [maximum (reduce max (seq scores))
+                  denominator (loop [i 0 sum 0.0]
+                                (if (< i (alength scores))
+                                  (recur (inc i) (+ sum (Math/exp (- (aget scores i) maximum))))
+                                  sum))]
+              (dotimes [past (inc position)]
+                (let [probability (/ (Math/exp (- (aget scores past) maximum)) denominator)
+                      v-base (+ (* past cache-width) (* kv-head head-dim))]
+                  (dotimes [i head-dim]
+                    (let [index (+ q-base i)]
+                      (aset-float attended index
+                                  (float (+ (aget attended index)
+                                            (* probability
+                                               (aget value-cache (+ v-base i)))))))))))))
+        attended))))
 
 (defn- attention [model state layer position ^floats normalized]
   (let [prefix (str "blk." layer ".")

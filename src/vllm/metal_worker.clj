@@ -67,6 +67,21 @@
                                    :q6-k "upload-q6k")
                          :id handle :rows rows :cols columns :data encoded})
         handle)))
+  accelerator/IAttentionAccelerator
+  (create-kv! [this id layers context kv-heads head-dim]
+    (locking lock
+      (let [handle (str id "-" (UUID/randomUUID))]
+        (exchange! this {:op "create-kv" :id handle :layers layers :context context
+                         :kvHeads kv-heads :headDim head-dim})
+        handle)))
+  (attention! [this handle layer position heads q k v]
+    (locking lock
+      (float-array
+       (:output (exchange! this {:op "attention" :id handle :layer layer
+                                 :position position :heads heads
+                                 :q (vec q) :k (vec k) :v (vec v)})))))
+  (release-kv! [this handle]
+    (locking lock (exchange! this {:op "release-kv" :id handle}) nil))
   Closeable
   (close [_]
     (try (.close writer) (catch Exception _))

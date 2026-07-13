@@ -61,14 +61,17 @@
           (fn [prompt options on-fragment]
             (let [prompt-ids (tokenizer/encode tok prompt)
                   state (llama/new-state model)
-                  generated (generate/generate-tokens
-                             model state prompt-ids
-                             (assoc options
-                                    :eos-token-ids (cond-> #{}
-                                                     (:eos-id tok) (conj (:eos-id tok)))
-                                    :on-token (fn [id]
-                                                (when on-fragment
-                                                  (on-fragment (tokenizer/decode tok [id]))))))]
+                  generated (try
+                              (generate/generate-tokens
+                               model state prompt-ids
+                               (assoc options
+                                      :eos-token-ids (cond-> #{}
+                                                       (:eos-id tok) (conj (:eos-id tok)))
+                                      :on-token (fn [id]
+                                                  (when on-fragment
+                                                    (on-fragment
+                                                     (tokenizer/decode tok [id]))))))
+                              (finally (llama/close-state! state)))]
               (assoc generated :text (tokenizer/decode tok (:tokens generated))
                      :prompt-tokens (count prompt-ids))))
           :generate-batch
@@ -86,7 +89,10 @@
                                                            (on-fragment
                                                             (tokenizer/decode tok [id])))))}))
                         requests)
-                  generated (generate/batch-generate-tokens model prepared)]
+                  generated (try (generate/batch-generate-tokens model prepared)
+                                 (finally
+                                   (doseq [request prepared]
+                                     (llama/close-state! (:state request)))))]
               (mapv (fn [request result]
                       (assoc result :text (tokenizer/decode tok (:tokens result))
                              :prompt-tokens (:prompt-count request)))
