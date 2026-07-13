@@ -13,9 +13,70 @@
     {:model (get metadata "tokenizer.ggml.model")
      :tokens (vec tokens) :scores (mapv double scores) :types (mapv long types)
      :token->id (zipmap tokens (range))
+     :chat-template (get metadata "tokenizer.chat_template")
      :bos-id (get metadata "tokenizer.ggml.bos_token_id")
      :eos-id (get metadata "tokenizer.ggml.eos_token_id")
      :unknown-id (get metadata "tokenizer.ggml.unknown_token_id")}))
+
+(defn chat-format
+  "Detect the checkpoint's common chat protocol from embedded tokens/template."
+  [tokenizer]
+  (let [tokens (:token->id tokenizer) template (or (:chat-template tokenizer) "")]
+    (cond
+      (or (contains? tokens "<|start_header_id|>")
+          (str/includes? template "start_header_id")) :llama-3
+      (or (contains? tokens "<|im_start|>")
+          (str/includes? template "<|im_start|>")) :chatml
+      (or (contains? tokens "<start_of_turn>")
+          (str/includes? template "<start_of_turn>")) :gemma
+      (or (contains? tokens "[INST]") (str/includes? template "[INST]")) :llama-2
+      :else :roles)))
+
+(defn render-chat
+  "Render messages with a checkpoint-compatible common chat protocol. This
+  covers Llama 2/3, ChatML, and Gemma templates; unknown custom Jinja templates
+  use an explicit role fallback instead of pretending to execute arbitrary Jinja."
+  [tokenizer messages]
+  (case (chat-format tokenizer)
+    :llama-3
+    (str (when (:bos-id tokenizer) (get (:tokens tokenizer) (:bos-id tokenizer)))
+         (apply str (map (fn [{:strs [role content]}]
+                           (str "<|start_header_id|>" role "<|end_header_id|>\n\n"
+                                content "<|eot_id|>")) messages))
+         "<|start_header_id|>assistant<|end_header_id|>\n\n")
+
+    :chatml
+    (str (apply str (map (fn [{:strs [role content]}]
+                           (str "<|im_start|>" role "\n" content "<|im_end|>\n"))
+                         messages))
+         "<|im_start|>assistant\n")
+
+    :gemma
+    (str (apply str (map (fn [{:strs [role content]}]
+                           (str "<start_of_turn>" (if (= role "assistant") "model" role)
+                                "\n" content "<end_of_turn>\n")) messages))
+         "<start_of_turn>model\n")
+
+    :llama-2
+    (let [system (some #(when (= "system" (get % "role")) (get % "content")) messages)
+          turns (remove #(= "system" (get % "role")) messages)]
+      (loop [remaining turns first-user? true output ""]
+        (if-let [message (first remaining)]
+          (let [role (get message "role") content (get message "content")]
+            (recur (rest remaining) false
+                   (str output
+                        (if (= role "user")
+                          (str (when (empty? output) "<s>") "[INST] "
+                               (when (and first-user? system)
+                                 (str "<<SYS>>\n" system "\n<</SYS>>\n\n"))
+                               content " [/INST]")
+                          (str " " content " </s>")))))
+          output)))
+
+    (str (str/join "\n" (map (fn [{:strs [role content]}]
+                                 (str (or role "user") ": " (or content "")))
+                               messages))
+         "\nassistant: ")))
 
 (defn- normalized [text]
   (str "▁" (str/replace (str text) " " "▁")))

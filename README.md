@@ -156,6 +156,10 @@ grouped-query causal attention, SwiGLU, residuals, and a per-layer KV cache.
 `vllm.tokenizer` reads the embedded Llama/SentencePiece vocabulary and performs
 maximum-score segmentation; `vllm.generate` provides seeded temperature,
 top-k/top-p, repetition-penalty sampling and incremental token callbacks.
+Chat requests inspect the embedded vocabulary/template signature and render
+the native Llama 2, Llama 3, ChatML, or Gemma turn markers. Unknown custom
+Jinja remains an explicit role fallback rather than being silently treated as
+one of those protocols.
 
 `vllm.ollama` ties those layers into a closeable local model registry and pure
 request handler for `GET /api/tags`, `GET /api/ps`, `POST /api/show`,
@@ -184,9 +188,9 @@ and deduplicated `sha256-*` GGUF blobs. A runtime created with
 `{:model-store path}` can `install!` a model and `restore!` all named models
 after restart without duplicating identical weight files.
 
-This is still not Ollama parity: SIMD/GPU quantized matrix kernels, exact chat
-template execution, continuous batching, and production-scale throughput
-evidence remain required.
+This is still not Ollama parity: SIMD/GPU quantized matrix kernels, arbitrary
+Jinja chat-template execution, continuous batching, and production-scale
+throughput evidence remain required.
 
 ## Test
 

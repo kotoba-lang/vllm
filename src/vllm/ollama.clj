@@ -53,6 +53,7 @@
             tok (tokenizer/from-metadata (:metadata file))]
         (map->GGUFEngine
          {:name name :path (str path) :file file :model model :tokenizer tok
+          :chat-prompt #(tokenizer/render-chat tok %)
           :generate
           (fn [prompt options on-fragment]
             (let [prompt-ids (tokenizer/encode tok prompt)
@@ -115,7 +116,10 @@
   (let [model-name (get body "model") engine (get @(:models runtime) model-name)]
     (if-not engine
       (error-response 404 (str "model '" model-name "' not found"))
-      (let [started (System/nanoTime)
+      (let [prompt (if chat?
+                     ((or (:chat-prompt engine) message-prompt) prompt)
+                     prompt)
+            started (System/nanoTime)
             result (scheduler/run!
                     (:scheduler runtime) model-name
                     #((:generate engine) prompt (options body)
@@ -184,7 +188,7 @@
                     (when-not (false? (get body "stream" true)) emit))
 
     [:post "/api/chat"]
-    (run-generation runtime body (message-prompt (or (get body "messages") [])) true
+    (run-generation runtime body (or (get body "messages") []) true
                     (when-not (false? (get body "stream" true)) emit))
 
     (error-response 404 "endpoint not found")))

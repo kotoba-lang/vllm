@@ -15,3 +15,21 @@
         ids (tokenizer/encode t "hello world!" {:add-eos? true})]
     (is (= [1 3 4 5 2] ids))
     (is (= "hello world!" (tokenizer/decode t ids)))))
+
+(deftest renders-common-checkpoint-chat-protocols
+  (let [messages [{"role" "system" "content" "Be brief."}
+                  {"role" "user" "content" "Hi"}]
+        build #(tokenizer/from-metadata
+                (assoc metadata "tokenizer.ggml.tokens" %
+                       "tokenizer.ggml.scores" (repeat (count %) 0)
+                       "tokenizer.ggml.token_type" (repeat (count %) 1)
+                       "tokenizer.ggml.bos_token_id" nil))]
+    (is (= "<|start_header_id|>system<|end_header_id|>\n\nBe brief.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nHi<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+           (tokenizer/render-chat (build ["<|start_header_id|>" "<|eot_id|>"])
+                                  messages)))
+    (is (= "<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n"
+           (tokenizer/render-chat (build ["<|im_start|>" "<|im_end|>"]) messages)))
+    (is (= "<start_of_turn>system\nBe brief.<end_of_turn>\n<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n"
+           (tokenizer/render-chat (build ["<start_of_turn>" "<end_of_turn>"]) messages)))
+    (is (= "<s>[INST] <<SYS>>\nBe brief.\n<</SYS>>\n\nHi [/INST]"
+           (tokenizer/render-chat (build ["[INST]" "<s>" "</s>"]) messages)))))
