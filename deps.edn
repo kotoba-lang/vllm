@@ -4,7 +4,7 @@
  ;; A vLLM inference request IS data (:vllm/* maps); the library renders it to the
  ;; OpenAI/vLLM wire shape (string-keyed maps) and normalizes responses. The actual
  ;; HTTP + JSON (de)serialization is a host-injected ITransport port.
- :deps {}
+ :deps {org.clojure/data.json {:mvn/version "2.5.1"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner

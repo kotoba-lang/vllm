@@ -154,7 +154,8 @@ top-k/top-p, repetition-penalty sampling and incremental token callbacks.
 `vllm.ollama` ties those layers into a closeable local model registry and pure
 request handler for `GET /api/tags`, `POST /api/generate`, and `POST /api/chat`.
 The handler returns Ring-like response maps and optionally emits Ollama-shaped
-stream chunks, allowing http-kit, Jetty, or another host to expose the wire.
+stream chunks. `vllm.ollama-server` exposes it through the JDK HTTP server as
+real JSON or streaming NDJSON on the standard port.
 
 ```clojure
 (require '[vllm.ollama :as ollama])
@@ -164,12 +165,14 @@ stream chunks, allowing http-kit, Jetty, or another host to expose the wire.
 (ollama/handle local {:method :post :path "/api/generate"
                       :body {"model" "tiny" "prompt" "Hello"
                              "stream" false}})
+
+(require '[vllm.ollama-server :as server])
+(def http (server/start! local)) ; http://127.0.0.1:11434
 ```
 
 This is still not Ollama parity: common Q4_K/Q5_K/Q6_K kernels, exact chat
 template execution, concurrent/batched scheduling, persistent model manifests,
-real HTTP serving, GPU execution, and real-model throughput/correctness evidence
-remain required.
+GPU execution, and real-model throughput/correctness evidence remain required.
 
 ## Test
 
