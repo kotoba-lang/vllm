@@ -109,6 +109,17 @@
         (dotimes [row rows] (compute-row! row)))
         out))))
 
+(defn- matrix-vectors [matrices ^floats x]
+  (let [backend (:accelerator (first matrices))]
+    (if (and backend
+             (satisfies? accelerator/IBatchedMatrixAccelerator backend)
+             (every? #(and (:accelerator-handle %)
+                           (identical? backend (:accelerator %))) matrices))
+      (accelerator/gemv-many! backend
+                              (mapv (fn [matrix]
+                                      [(:accelerator-handle matrix) x]) matrices))
+      (mapv #(matrix-vector % x) matrices))))
+
 (defn- add! [^floats target ^floats source]
   (dotimes [i (alength target)]
     (aset-float target i (float (+ (aget target i) (aget source i)))))
@@ -237,9 +248,10 @@
   (let [{:keys [head-count head-count-kv head-dim rope-dimension-count rope-freq-base]}
         (:config model)
         prefix (str "blk." layer ".")
-        q (matrix-vector (tensor! model (str prefix "attn_q.weight")) normalized)
-        k (matrix-vector (tensor! model (str prefix "attn_k.weight")) normalized)
-        v (matrix-vector (tensor! model (str prefix "attn_v.weight")) normalized)
+        [q k v] (matrix-vectors [(tensor! model (str prefix "attn_q.weight"))
+                                 (tensor! model (str prefix "attn_k.weight"))
+                                 (tensor! model (str prefix "attn_v.weight"))]
+                                normalized)
         _ (rope! q head-count head-dim position (or rope-freq-base 10000.0)
                  rope-dimension-count)
         _ (rope! k head-count-kv head-dim position (or rope-freq-base 10000.0)
@@ -296,8 +308,9 @@
                     residual (add! hidden (attention model state layer position normalized))
                     ffn-input (rms-norm residual (tensor! model (str prefix "ffn_norm.weight"))
                                         (or rms-epsilon 1.0e-5))
-                    gate (matrix-vector (tensor! model (str prefix "ffn_gate.weight")) ffn-input)
-                    up (matrix-vector (tensor! model (str prefix "ffn_up.weight")) ffn-input)
+                    [gate up] (matrix-vectors [(tensor! model (str prefix "ffn_gate.weight"))
+                                               (tensor! model (str prefix "ffn_up.weight"))]
+                                              ffn-input)
                     activated (float-array (alength gate))]
                 (dotimes [i (alength gate)]
                   (aset-float activated i (float (* (silu (aget gate i)) (aget up i)))))

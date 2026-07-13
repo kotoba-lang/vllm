@@ -41,6 +41,16 @@
       (float-array (:y (exchange! this {:op "gemv" :id handle :x (vec x)})))))
   (release! [this handle]
     (locking lock (exchange! this {:op "release" :id handle}) nil))
+  accelerator/IBatchedMatrixAccelerator
+  (gemv-many! [this requests]
+    (locking lock
+      (mapv (comp float-array :y)
+            (:results
+             (exchange! this
+                        {:op "gemv-many"
+                         :requests (mapv (fn [[handle x]]
+                                           {:id handle :x (vec x)})
+                                         requests)})))))
   Closeable
   (close [_]
     (try (.close writer) (catch Exception _))

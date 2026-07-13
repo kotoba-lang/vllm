@@ -9,3 +9,6 @@
   (release! [accelerator handle]
     "Release a matrix handle."))
 
+(defprotocol IBatchedMatrixAccelerator
+  (gemv-many! [accelerator requests]
+    "Execute ordered `[handle f32-vector]` requests in one device submission."))

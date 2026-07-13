@@ -23,10 +23,13 @@
       (let [handle (accelerator/upload-q8! worker "verify" 2 64 (raw-q8-matrix))
             x (float-array (map #(- (* 0.02 %) 0.4) (range 64)))
             first-result (vec (accelerator/gemv! worker handle x))
-            second-result (vec (accelerator/gemv! worker handle (float-array (map #(* 2 %) x))))]
+            doubled (float-array (map #(* 2 %) x))
+            second-result (vec (accelerator/gemv! worker handle doubled))
+            batched (mapv vec (accelerator/gemv-many! worker [[handle x] [handle doubled]]))]
         (println "Metal Q8_0 first:" first-result "second:" second-result)
         (when-not (and (close? [73.76 95.44] first-result)
                        (close? [147.52 190.88] second-result)
+                       (= [first-result second-result] batched)
                        (= 1 (:handles (metal/stats worker))))
           (throw (ex-info "Metal worker verification failed" {})))
         (accelerator/release! worker handle)
