@@ -74,6 +74,11 @@
         (exchange! this {:op "create-kv" :id handle :layers layers :context context
                          :kvHeads kv-heads :headDim head-dim})
         handle)))
+  (clone-kv! [this source id]
+    (locking lock
+      (let [handle (str id "-" (UUID/randomUUID))]
+        (exchange! this {:op "clone-kv" :source source :id handle})
+        handle)))
   (attention! [this handle layer position heads q k v]
     (locking lock
       (float-array

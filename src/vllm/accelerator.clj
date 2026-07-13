@@ -19,5 +19,6 @@
 
 (defprotocol IAttentionAccelerator
   (create-kv! [accelerator id layers context kv-heads head-dim])
+  (clone-kv! [accelerator handle id])
   (attention! [accelerator handle layer position heads q k v])
   (release-kv! [accelerator handle]))

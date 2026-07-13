@@ -77,10 +77,11 @@
   (when-not (seq requests)
     (throw (ex-info "batch generation requires at least one request" {})))
   (let [entries
-        (mapv (fn [{:keys [state prompt-ids options]}]
+        (mapv (fn [{:keys [state prompt-ids options prefilled? on-prefilled]}]
                 (when-not (seq prompt-ids)
                   (throw (ex-info "generation requires at least one prompt token" {})))
-                {:state state :pending (vec (butlast prompt-ids)) :input (last prompt-ids)
+                {:state state :pending (if prefilled? [] (vec (butlast prompt-ids)))
+                 :input (last prompt-ids) :on-prefilled on-prefilled
                  :history (vec prompt-ids) :generated [] :done? false
                  :finish-reason nil :options options
                  :random (Random. (long (get options :seed 0)))}) requests)
@@ -94,6 +95,8 @@
                 (recur (reduce (fn [result index]
                                  (update-in result [index :pending] #(vec (rest %))))
                                entries active))))))]
+    (doseq [{:keys [state on-prefilled]} entries :when on-prefilled]
+      (on-prefilled state))
     (loop [entries entries]
       (let [active (keep-indexed
                     (fn [index entry]

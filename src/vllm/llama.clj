@@ -267,6 +267,16 @@
     (accelerator/release-kv! (:accelerator state) handle))
   nil)
 
+(defn clone-state
+  "Clone a decoder state. Metal KV contents remain device-resident and are
+  copied device-to-device, allowing independent generation branches."
+  [state]
+  (if-let [handle (:kv-handle state)]
+    {:position (atom @(:position state)) :accelerator (:accelerator state)
+     :kv-handle (accelerator/clone-kv! (:accelerator state) handle "state-clone")}
+    {:position (atom @(:position state))
+     :keys (mapv aclone (:keys state)) :values (mapv aclone (:values state))}))
+
 (defn- tensor! [model name]
   (let [source (:tensors model)]
     (if (fn? source) (source name)

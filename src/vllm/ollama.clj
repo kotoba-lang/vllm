@@ -5,26 +5,30 @@
             [vllm.gguf :as gguf]
             [vllm.llama :as llama]
             [vllm.manifest :as manifest]
+            [vllm.prefix-cache :as prefix-cache]
             [vllm.scheduler :as scheduler]
             [vllm.tokenizer :as tokenizer])
   (:import [java.io Closeable]
            [java.time Instant]))
 
 (declare close!)
-(defrecord OllamaRuntime [models scheduler store accelerator]
+(defrecord OllamaRuntime [models scheduler store accelerator prefix-cache-capacity]
   Closeable
   (close [this] (close! this)))
-(defrecord GGUFEngine [name path file model tokenizer]
+(defrecord GGUFEngine [name path file model tokenizer prefix-cache]
   Closeable
   (close [_]
+    (when prefix-cache (.close ^Closeable prefix-cache))
     (llama/close-model! model)
     (.close ^Closeable file)))
 
 (defn runtime
   ([] (runtime {}))
-  ([{:keys [model-store accelerator] :as options}]
+  ([{:keys [model-store accelerator prefix-cache-capacity]
+     :or {prefix-cache-capacity 0} :as options}]
    (->OllamaRuntime (atom {}) (scheduler/scheduler options)
-                    (when model-store (manifest/store model-store)) accelerator)))
+                    (when model-store (manifest/store model-store)) accelerator
+                    prefix-cache-capacity)))
 
 (defn register!
   "Register an engine map/record. It must expose `:name` and `:generate`, where
@@ -49,13 +53,17 @@
 (defn load-gguf-engine
   "Open a local Llama GGUF and return a registry-ready engine."
   ([name path] (load-gguf-engine name path {}))
-  ([name path {:keys [accelerator]}]
+  ([name path {:keys [accelerator prefix-cache-capacity]
+               :or {prefix-cache-capacity 0}}]
   (let [file (gguf/open-file path)]
     (try
       (let [model (llama/load-gguf file {:accelerator accelerator})
-            tok (tokenizer/from-metadata (:metadata file))]
+            tok (tokenizer/from-metadata (:metadata file))
+            cache (when (pos? prefix-cache-capacity)
+                    (prefix-cache/prefix-cache prefix-cache-capacity))]
         (map->GGUFEngine
          {:name name :path (str path) :file file :model model :tokenizer tok
+          :prefix-cache cache
           :chat-prompt #(tokenizer/render-chat tok %)
           :generate
           (fn [prompt options on-fragment]
@@ -78,9 +86,13 @@
           (fn [requests]
             (let [prepared
                   (mapv (fn [{:keys [prompt options on-fragment]}]
-                          (let [prompt-ids (tokenizer/encode tok prompt)]
+                          (let [prompt-ids (tokenizer/encode tok prompt)
+                                cached (when cache (prefix-cache/lookup cache prompt-ids))]
                             {:prompt-count (count prompt-ids)
-                             :state (llama/new-state model) :prompt-ids prompt-ids
+                             :state (or cached (llama/new-state model))
+                             :prompt-ids prompt-ids :prefilled? (boolean cached)
+                             :on-prefilled (when (and cache (nil? cached))
+                                             #(prefix-cache/store! cache prompt-ids %))
                              :options (assoc options
                                              :eos-token-ids (cond-> #{}
                                                               (:eos-id tok) (conj (:eos-id tok)))
@@ -100,7 +112,10 @@
       (catch Throwable error (.close ^Closeable file) (throw error))))))
 
 (defn load! [runtime name path]
-  (register! runtime (load-gguf-engine name path {:accelerator (:accelerator runtime)})))
+  (register! runtime
+             (load-gguf-engine name path
+                               {:accelerator (:accelerator runtime)
+                                :prefix-cache-capacity (:prefix-cache-capacity runtime)})))
 
 (defn install!
   "Import a GGUF into the configured content-addressed store and load it."
@@ -199,7 +214,9 @@
      :body {"models" (mapv (fn [[name engine]]
                               {"name" name "model" name
                                "size" (when-let [path (:path engine)]
-                                        (.length (java.io.File. path)))})
+                                        (.length (java.io.File. path)))
+                               "prefix_cache" (when-let [cache (:prefix-cache engine)]
+                                                  (prefix-cache/stats cache))})
                             (sort-by key @(:models runtime)))
             "scheduler" (scheduler/stats (:scheduler runtime))}}
 

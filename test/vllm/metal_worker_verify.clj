@@ -137,6 +137,14 @@
           (when-not (and (close? [2 3 2 3] first-result)
                          (close? expected-second second-result))
             (throw (ex-info "Metal KV attention verification failed" {})))
+          (let [clone (accelerator/clone-kv! worker kv "kv-clone")
+                original-next (vec (accelerator/attention! worker kv 0 2 2
+                                                            [1 0 0 1] [1 1] [6 7]))
+                clone-next (vec (accelerator/attention! worker clone 0 2 2
+                                                         [1 0 0 1] [1 1] [6 7]))]
+            (when-not (= original-next clone-next)
+              (throw (ex-info "cloned Metal KV cache diverged" {})))
+            (accelerator/release-kv! worker clone))
           (accelerator/release-kv! worker kv)
           (when-not (zero? (:kv-handles (metal/stats worker)))
             (throw (ex-info "Metal worker leaked KV cache" {})))))

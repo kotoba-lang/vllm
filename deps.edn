@@ -30,4 +30,8 @@
   :real-continuous-verify
   {:extra-paths ["test"]
    :jvm-opts ["-Xms128m" "-Xmx512m"]
-   :main-opts ["-m" "vllm.real-continuous-verify"]}}}
+   :main-opts ["-m" "vllm.real-continuous-verify"]}
+  :real-prefix-verify
+  {:extra-paths ["test"]
+   :jvm-opts ["-Xms128m" "-Xmx512m"]
+   :main-opts ["-m" "vllm.real-prefix-verify"]}}}
