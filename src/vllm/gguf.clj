@@ -148,3 +148,82 @@
   (if-let [{:keys [absolute-offset byte-count]} (tensor-info gguf name)]
     (read-buffer! (:channel gguf) absolute-offset byte-count)
     (throw (ex-info "GGUF tensor not found" {:tensor name :path (:path gguf)}))))
+
+(defn- half->float [bits]
+  (let [sign (bit-shift-left (bit-and bits 0x8000) 16)
+        exponent (bit-and (unsigned-bit-shift-right bits 10) 0x1f)
+        fraction (bit-and bits 0x3ff)
+        float-bits
+        (cond
+          (zero? exponent)
+          (if (zero? fraction)
+            sign
+            (loop [fraction fraction exponent -14]
+              (if (zero? (bit-and fraction 0x400))
+                (recur (bit-shift-left fraction 1) (dec exponent))
+                (bit-or sign (bit-shift-left (+ exponent 127) 23)
+                        (bit-shift-left (bit-and fraction 0x3ff) 13)))))
+          (= exponent 31)
+          (bit-or sign 0x7f800000 (bit-shift-left fraction 13))
+          :else
+          (bit-or sign (bit-shift-left (+ (- exponent 15) 127) 23)
+                  (bit-shift-left fraction 13)))]
+    (Float/intBitsToFloat (unchecked-int float-bits))))
+
+(defn decode-f32
+  "Decode one GGML tensor payload into an unboxed JVM float array.
+
+  Supports the dense types used by non-quantized models and the foundational
+  32-value Q4_0/Q4_1/Q8_0 block formats. K-block and importance-matrix formats
+  remain catalog-readable but fail explicitly until their kernels land."
+  [type ^ByteBuffer buffer element-count]
+  (.order buffer ByteOrder/LITTLE_ENDIAN)
+  (let [out (float-array (int element-count))
+        half! (fn [] (half->float (bit-and 0xffff (int (.getShort buffer)))))]
+    (case type
+      :f32 (dotimes [i element-count] (aset-float out i (.getFloat buffer)))
+      :f16 (dotimes [i element-count] (aset-float out i (half!)))
+      :bf16 (dotimes [i element-count]
+              (aset-float out i
+                          (Float/intBitsToFloat
+                           (unchecked-int
+                            (bit-shift-left (bit-and 0xffff (int (.getShort buffer))) 16)))))
+      :q4-0
+      (doseq [base (range 0 element-count 32)]
+        (let [scale (half!)]
+          (dotimes [i 16]
+            (let [packed (bit-and 0xff (int (.get buffer)))]
+              (aset-float out (+ base i)
+                          (float (* scale (- (bit-and packed 0x0f) 8))))
+              (aset-float out (+ base i 16)
+                          (float (* scale (- (unsigned-bit-shift-right packed 4) 8))))))))
+      :q4-1
+      (doseq [base (range 0 element-count 32)]
+        (let [scale (half!) minimum (half!)]
+          (dotimes [i 16]
+            (let [packed (bit-and 0xff (int (.get buffer)))]
+              (aset-float out (+ base i)
+                          (float (+ minimum (* scale (bit-and packed 0x0f)))))
+              (aset-float out (+ base i 16)
+                          (float (+ minimum (* scale (unsigned-bit-shift-right packed 4)))))))))
+      :q8-0
+      (doseq [base (range 0 element-count 32)]
+        (let [scale (half!)]
+          (dotimes [i 32]
+            (aset-float out (+ base i) (float (* scale (.get buffer)))))))
+      (throw (ex-info "GGML tensor type has no F32 decoder yet" {:type type})))
+    (when (.hasRemaining buffer)
+      (throw (ex-info "GGML decoder did not consume the complete tensor window"
+                      {:type type :remaining (.remaining buffer)})))
+    out))
+
+(defn read-tensor-f32
+  "Lazily read and dequantize one tensor. Returns
+  `{:shape [...], :source-type keyword, :data float-array}`."
+  [gguf name]
+  (if-let [{:keys [shape type dimensions] :as info} (tensor-info gguf name)]
+    (let [elements (reduce * 1 dimensions)]
+      {:shape shape :source-type type
+       :data (decode-f32 type (read-tensor-bytes gguf name) elements)
+       :tensor-info info})
+    (throw (ex-info "GGUF tensor not found" {:tensor name :path (:path gguf)}))))

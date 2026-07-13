@@ -132,7 +132,9 @@ layer. `open-file` parses scalar, string, nested-array metadata and the tensor
 catalog, validates alignment/block sizes/file windows, and leaves model payloads
 on disk. `read-tensor-bytes` reads only one requested tensor window. Catalog
 support covers F32/F16/BF16, integer tensors, and the common Q4/Q5/Q8/K-block
-encodings; dequantization and Transformer execution are the next layer.
+encodings. F32/F16/BF16 plus Q4_0/Q4_1/Q8_0 payloads can now be lazily decoded
+into unboxed F32 arrays with `read-tensor-f32`; remaining K/IQ/TQ formats fail
+explicitly until their block kernels land.
 
 ```clojure
 (require '[vllm.gguf :as gguf])

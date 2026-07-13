@@ -36,5 +36,34 @@
         (is (= ["output_norm.weight" "token_embd.weight"] (gguf/tensor-names model)))
         (is (= [3 2] (:shape (gguf/tensor-info model "token_embd.weight"))))
         (is (= 24 (.remaining (gguf/read-tensor-bytes model "token_embd.weight"))))
-        (is (= 4 (.remaining (gguf/read-tensor-bytes model "output_norm.weight")))))
+        (is (= 4 (.remaining (gguf/read-tensor-bytes model "output_norm.weight"))))
+        (is (= [1.0 2.0 3.0 4.0 5.0 6.0]
+               (vec (:data (gguf/read-tensor-f32 model "token_embd.weight")))))
+        (is (= [1.0 2.0]
+               (vec (:data (gguf/read-tensor-f32 model "output_norm.weight"))))))
       (finally (Files/deleteIfExists path)))))
+
+(defn- little-buffer [size]
+  (doto (ByteBuffer/allocate size) (.order ByteOrder/LITTLE_ENDIAN)))
+
+(deftest decodes-common-quantized-blocks
+  (let [q4-0 (little-buffer 18)
+        _ (.putShort q4-0 (unchecked-short 0x3c00))
+        _ (dotimes [i 16] (.put q4-0 (unchecked-byte
+                                      (bit-or i (bit-shift-left (- 15 i) 4)))))
+        q4-1 (little-buffer 20)
+        _ (.putShort q4-1 (unchecked-short 0x4000))
+        _ (.putShort q4-1 (unchecked-short 0xbc00))
+        _ (dotimes [i 16] (.put q4-1 (unchecked-byte
+                                      (bit-or i (bit-shift-left i 4)))))
+        q8-0 (little-buffer 34)
+        _ (.putShort q8-0 (unchecked-short 0x3800))
+        _ (doseq [i (range -16 16)] (.put q8-0 (byte i)))]
+    (.flip q4-0) (.flip q4-1) (.flip q8-0)
+    (is (= (mapv float (concat (range -8 8) (range 7 -9 -1)))
+           (vec (gguf/decode-f32 :q4-0 q4-0 32))))
+    (is (= (mapv float (concat (map #(- (* 2 %) 1) (range 16))
+                               (map #(- (* 2 %) 1) (range 16))))
+           (vec (gguf/decode-f32 :q4-1 q4-1 32))))
+    (is (= (mapv #(float (* 0.5 %)) (range -16 16))
+           (vec (gguf/decode-f32 :q8-0 q8-0 32))))))
