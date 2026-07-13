@@ -137,6 +137,11 @@ Q4_K/Q5_K/Q6_K superblocks can be lazily decoded into unboxed F32 arrays with
 `read-tensor-f32`; remaining IQ/TQ formats fail explicitly until their block
 kernels land.
 
+The Llama loader keeps supported quantized matrices as read-only mmap windows.
+Matrix-vector execution decodes one row into a reusable-sized temporary rather
+than retaining a full F32 model copy; quantized token embeddings are likewise
+decoded one selected row at a time.
+
 ```clojure
 (require '[vllm.gguf :as gguf])
 
@@ -171,7 +176,7 @@ real JSON or streaming NDJSON on the standard port.
 (def http (server/start! local)) ; http://127.0.0.1:11434
 ```
 
-This is still not Ollama parity: quantized-direct matrix kernels, exact chat
+This is still not Ollama parity: fused/SIMD quantized matrix kernels, exact chat
 template execution, concurrent/batched scheduling, persistent model manifests,
 GPU execution, and real-model throughput/correctness evidence remain required.
 

@@ -2,7 +2,7 @@
   "Validated, lazy JVM GGUF v3 reader for local inference runtimes."
   (:import [java.io Closeable RandomAccessFile]
            [java.nio ByteBuffer ByteOrder]
-           [java.nio.channels FileChannel]
+           [java.nio.channels FileChannel FileChannel$MapMode]
            [java.nio.charset StandardCharsets]))
 
 (def ^:private value-types
@@ -147,6 +147,16 @@
 (defn read-tensor-bytes [gguf name]
   (if-let [{:keys [absolute-offset byte-count]} (tensor-info gguf name)]
     (read-buffer! (:channel gguf) absolute-offset byte-count)
+    (throw (ex-info "GGUF tensor not found" {:tensor name :path (:path gguf)}))))
+
+(defn tensor-view
+  "Memory-map one tensor window without copying or decoding its payload."
+  [gguf name]
+  (if-let [{:keys [absolute-offset byte-count] :as info} (tensor-info gguf name)]
+    (assoc info :buffer (doto (.map ^FileChannel (:channel gguf)
+                                    FileChannel$MapMode/READ_ONLY
+                                    absolute-offset byte-count)
+                          (.order ByteOrder/LITTLE_ENDIAN)))
     (throw (ex-info "GGUF tensor not found" {:tensor name :path (:path gguf)}))))
 
 (defn- half->float [bits]

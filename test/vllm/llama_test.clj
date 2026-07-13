@@ -1,10 +1,24 @@
 (ns vllm.llama-test
-  (:require [clojure.test :refer [deftest is]] [vllm.llama :as llama]))
+  (:require [clojure.test :refer [deftest is]] [vllm.llama :as llama])
+  (:import [java.nio ByteBuffer ByteOrder]))
 
 (defn- tensor [shape values] {:shape shape :data (float-array values)})
 (defn- identity-matrix [n scale]
   (tensor [n n] (for [row (range n) column (range n)]
                   (if (= row column) scale 0.0))))
+
+(deftest mmap-quantized-matrix-vector-does-not-require-dense-storage
+  (let [payload (doto (ByteBuffer/allocate 36) (.order ByteOrder/LITTLE_ENDIAN))
+        _ (dotimes [_ 2]
+            (.putShort payload (unchecked-short 0x3c00))
+            (dotimes [_ 16] (.put payload (unchecked-byte 0x98))))
+        _ (.flip payload)
+        matrix {:shape [2 32] :type :q4-0 :buffer payload :byte-count 36}
+        input (float-array (repeat 32 1.0))
+        output (llama/matrix-vector matrix input)]
+    ;; Each row contains sixteen zeros (low nibble 8) and sixteen ones (high 9).
+    (is (= [16.0 16.0] (vec output)))
+    (is (nil? (:data matrix)))))
 
 (deftest llama-step-runs-rope-gqa-swiglu-and-kv-cache
   (let [width 4 ffn 8
