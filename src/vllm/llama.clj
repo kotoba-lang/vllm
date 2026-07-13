@@ -1,6 +1,7 @@
 (ns vllm.llama
   "Reference Llama-family decoder with RoPE, GQA, SwiGLU, and mutable KV cache."
-  (:require [vllm.gguf :as gguf])
+  (:require [vllm.accelerator :as accelerator]
+            [vllm.gguf :as gguf])
   (:import [java.nio ByteBuffer ByteOrder]
            [java.util.function IntConsumer Supplier]
            [java.util.stream IntStream]))
@@ -68,11 +69,13 @@
 (defn matrix-vector
   "Multiply a dense or mmap-backed GGUF matrix by an F32 vector. Quantized
   matrices are decoded one row at a time, never expanded persistently."
-  [{:keys [shape data type buffer byte-count]} ^floats x]
+  [{:keys [shape data type buffer byte-count accelerator accelerator-handle]} ^floats x]
   (let [[rows columns] shape]
     (when-not (= columns (alength x))
       (fail "matrix/vector shape mismatch" {:matrix shape :vector (alength x)}))
-    (let [out (float-array rows)
+    (if accelerator-handle
+      (accelerator/gemv! accelerator accelerator-handle x)
+      (let [out (float-array rows)
           direct? (and buffer (contains? #{:q8-0 :q4-0 :q4-1} type))
           thread-buffer
           (when direct?
@@ -104,7 +107,7 @@
         (.forEach (.parallel (IntStream/range 0 rows))
                   (reify IntConsumer (accept [_ row] (compute-row! row))))
         (dotimes [row rows] (compute-row! row)))
-      out)))
+        out))))
 
 (defn- add! [^floats target ^floats source]
   (dotimes [i (alength target)]
@@ -162,7 +165,8 @@
 (defn load-gguf
   "Load a Llama GGUF into the reference executor. Tensor payloads are decoded
   on first use and cached as unboxed F32 arrays. The GGUF file must remain open."
-  [model-file]
+  ([model-file] (load-gguf model-file {}))
+  ([model-file {:keys [accelerator]}]
   (let [m (:metadata model-file) architecture (get m "general.architecture")]
     (when-not (= "llama" architecture)
       (fail "only general.architecture=llama is executable" {:architecture architecture}))
@@ -176,7 +180,17 @@
                       (let [info (gguf/tensor-info model-file name)
                             value (if (contains? #{:q4-0 :q4-1 :q8-0
                                                    :q4-k :q5-k :q6-k} (:type info))
-                                    (gguf/tensor-view model-file name)
+                                    (let [{:keys [shape type buffer] :as view}
+                                          (gguf/tensor-view model-file name)]
+                                      (if (and accelerator (= :q8-0 type)
+                                               (not= name "token_embd.weight"))
+                                        (assoc view
+                                               :accelerator accelerator
+                                               :accelerator-handle
+                                               (accelerator/upload-q8! accelerator name
+                                                                       (first shape) (second shape)
+                                                                       buffer))
+                                        view))
                                     (let [{:keys [shape data]}
                                           (gguf/read-tensor-f32 model-file name)]
                                       (tensor shape data)))]
@@ -191,7 +205,15 @@
                   :rope-dimension-count (get m "llama.rope.dimension_count")
                   :rope-freq-base (get m "llama.rope.freq_base" 10000.0)
                   :rms-epsilon (get m "llama.attention.layer_norm_rms_epsilon" 1.0e-5)}]
-      (assoc (create-model config load!) :tensor-cache cache))))
+      (assoc (create-model config load!) :tensor-cache cache :accelerator accelerator)))))
+
+(defn close-model!
+  "Release accelerator-resident weights owned by a loaded model."
+  [model]
+  (doseq [[_ tensor] @(:tensor-cache model)
+          :when (:accelerator-handle tensor)]
+    (accelerator/release! (:accelerator tensor) (:accelerator-handle tensor)))
+  nil)
 
 (defn new-state [model]
   (let [{:keys [block-count context-length head-count-kv head-dim]} (:config model)

@@ -1,11 +1,26 @@
 (ns vllm.llama-test
-  (:require [clojure.test :refer [deftest is]] [vllm.llama :as llama])
+  (:require [clojure.test :refer [deftest is]]
+            [vllm.accelerator :as accelerator]
+            [vllm.llama :as llama])
   (:import [java.nio ByteBuffer ByteOrder]))
 
 (defn- tensor [shape values] {:shape shape :data (float-array values)})
 (defn- identity-matrix [n scale]
   (tensor [n n] (for [row (range n) column (range n)]
                   (if (= row column) scale 0.0))))
+
+(deftest matrix-vector-dispatches-resident-accelerator-handle
+  (let [calls (atom [])
+        backend (reify accelerator/IMatrixAccelerator
+                  (upload-q8! [_ _ _ _ _] nil)
+                  (gemv! [_ handle x]
+                    (swap! calls conj [handle (vec x)])
+                    (float-array [7.0 8.0]))
+                  (release! [_ _] nil))
+        matrix {:shape [2 3] :type :q8-0 :accelerator backend
+                :accelerator-handle "gpu-1"}]
+    (is (= [7.0 8.0] (vec (llama/matrix-vector matrix (float-array [1 2 3])))))
+    (is (= [["gpu-1" [1.0 2.0 3.0]]] @calls))))
 
 (deftest mmap-quantized-matrix-vector-does-not-require-dense-storage
   (let [payload (doto (ByteBuffer/allocate 36) (.order ByteOrder/LITTLE_ENDIAN))
