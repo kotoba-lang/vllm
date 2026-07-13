@@ -193,7 +193,8 @@
                                                    :q4-k :q5-k :q6-k} (:type info))
                                     (let [{:keys [shape type buffer] :as view}
                                           (gguf/tensor-view model-file name)]
-                                      (if (and accelerator (contains? #{:q8-0 :q4-0 :q4-k} type)
+                                      (if (and accelerator
+                                               (contains? #{:q8-0 :q4-0 :q4-k :q5-0 :q5-1} type)
                                                (satisfies? accelerator/IQuantizedMatrixAccelerator
                                                            accelerator)
                                                (not= name "token_embd.weight"))

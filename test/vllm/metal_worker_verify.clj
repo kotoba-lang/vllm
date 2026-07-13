@@ -31,6 +31,24 @@
     (.put (byte-array 128))
     (.flip)))
 
+(defn- raw-q5-matrix []
+  (doto (ByteBuffer/allocate 44)
+    (.order ByteOrder/LITTLE_ENDIAN)
+    (.putShort (short 0x3c00)) (.putInt (unchecked-int 0xffffffff))
+    (.put (byte-array 16 (unchecked-byte 0x10)))
+    (.putShort (short 0x3800)) (.putInt (unchecked-int 0xffffffff))
+    (.put (byte-array 16 (unchecked-byte 0x10)))
+    (.flip)))
+
+(defn- raw-q5-1-matrix []
+  (doto (ByteBuffer/allocate 48)
+    (.order ByteOrder/LITTLE_ENDIAN)
+    (.putShort (short 0x3c00)) (.putShort (short 0x3c00)) (.putInt 0)
+    (.put (byte-array 16 (unchecked-byte 0x10)))
+    (.putShort (short 0x3c00)) (.putShort (short 0x3c00)) (.putInt 0)
+    (.put (byte-array 16 (unchecked-byte 0x10)))
+    (.flip)))
+
 (defn- close? [expected actual]
   (every? true? (map #(< (Math/abs (- %1 %2)) 1.0e-4) expected actual)))
 
@@ -66,5 +84,15 @@
           (println "Metal Q4_K:" result)
           (when-not (close? [-256.0] result)
             (throw (ex-info "Metal Q4_K verification failed" {:actual result})))
-          (accelerator/release! worker q4k)))
+          (accelerator/release! worker q4k))
+        (doseq [[type raw expected] [[:q5-0 (raw-q5-matrix) 24.0]
+                                     [:q5-1 (raw-q5-1-matrix) 96.0]]]
+          (let [handle (accelerator/upload-quantized! worker type (name type) 1 64 raw)
+                result (vec (accelerator/gemv! worker handle
+                                                (float-array (repeat 64 1.0))))]
+            (println "Metal" type result)
+            (when-not (close? [expected] result)
+              (throw (ex-info "Metal Q5 verification failed"
+                              {:type type :actual result})))
+            (accelerator/release! worker handle))))
       (finally (.close ^Closeable worker)))))
