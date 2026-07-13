@@ -1,10 +1,13 @@
 (ns vllm.real-gguf-verify
-  (:require [vllm.generate :as generate]
+  (:require [clojure.data.json :as json]
             [vllm.gguf :as gguf]
-            [vllm.llama :as llama]
-            [vllm.tokenizer :as tokenizer])
+            [vllm.ollama :as ollama]
+            [vllm.ollama-server :as server])
   (:gen-class)
-  (:import [java.nio.file Files Paths]
+  (:import [java.net URI]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
+            HttpResponse$BodyHandlers]
+           [java.nio.file Files Paths]
            [java.security MessageDigest]))
 
 (defn- sha256 [path]
@@ -21,24 +24,32 @@
   (when-not path
     (throw (ex-info "usage: clojure -M:real-gguf-verify /path/model.gguf" {})))
   (let [started (System/nanoTime)]
-    (with-open [file (gguf/open-file path)]
-      (let [model (llama/load-gguf file)
-            tokenizer (tokenizer/from-metadata (:metadata file))
-            prompt "Once upon a time"
-            prompt-ids (tokenizer/encode tokenizer prompt)
-            result (generate/generate-tokens
-                    model (llama/new-state model) prompt-ids
-                    {:max-tokens 8 :temperature 0
-                     :eos-token-ids #{(:eos-id tokenizer)}})
-            text (tokenizer/decode tokenizer (:tokens result))
-            elapsed (/ (- (System/nanoTime) started) 1.0e9)]
-        (when-not (every? #(Float/isFinite %) (:logits
-                                               (llama/step! model
-                                                            (llama/new-state model)
-                                                            (first prompt-ids))))
-          (throw (ex-info "real GGUF produced non-finite logits" {})))
-        (println (pr-str {:sha256 (sha256 path)
-                          :architecture (get (:metadata file) "general.architecture")
-                          :prompt-tokens (count prompt-ids)
-                          :generated-tokens (count (:tokens result))
-                          :text text :seconds elapsed}))))))
+    (with-open [catalog (gguf/open-file path)
+                runtime (ollama/runtime {:workers 1 :queue-capacity 2})]
+      (ollama/load! runtime "verify" path)
+      (with-open [http (server/start! runtime {:port 0 :threads 1})]
+        (let [payload (json/write-str
+                       {"model" "verify" "prompt" "Once upon a time"
+                        "num_predict" 8 "stream" false
+                        "options" {"temperature" 0}})
+              request (-> (HttpRequest/newBuilder
+                           (URI/create (str "http://127.0.0.1:" (:port http)
+                                            "/api/generate")))
+                          (.header "Content-Type" "application/json")
+                          (.POST (HttpRequest$BodyPublishers/ofString payload))
+                          .build)
+              response (.send (HttpClient/newHttpClient) request
+                              (HttpResponse$BodyHandlers/ofString))
+              body (json/read-str (.body response))
+              elapsed (/ (- (System/nanoTime) started) 1.0e9)]
+          (when-not (and (= 200 (.statusCode response))
+                         (= ". He was very happy. He wanted" (get body "response"))
+                         (= 8 (get body "eval_count")))
+            (throw (ex-info "real GGUF HTTP generation mismatch"
+                            {:status (.statusCode response) :body body})))
+          (println (pr-str {:sha256 (sha256 path)
+                            :architecture (get (:metadata catalog) "general.architecture")
+                            :prompt-tokens (get body "prompt_eval_count")
+                            :generated-tokens (get body "eval_count")
+                            :text (get body "response") :seconds elapsed
+                            :http-status (.statusCode response)})))))))

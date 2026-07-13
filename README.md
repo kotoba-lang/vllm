@@ -210,9 +210,10 @@ The verified public fixture is `ggml-org/tiny-llamas/stories15M-q8_0.gguf`
 `2eda49203f2f044f3dddf29a7dd7cc861ef5a0340f518a19613d73ba6d9c06b6`).
 On Apple M4 the current reference executor generated eight greedy tokens from
 `Once upon a time` as `. He was very happy. He wanted`. This proves real GGUF
-correctness, not competitive throughput: the optimized mmap Q8 path still took
-6.53 seconds for model execution (7.68 seconds including JVM startup) on Apple
-M4. The verifier's bounded 512 MB heap reduced measured maximum RSS from about
+correctness across the real `/api/generate` HTTP boundary, not competitive
+throughput: the optimized mmap Q8 path took 6.72 seconds through load,
+scheduler, generation, and JSON response on Apple M4. The verifier's bounded
+512 MB heap reduced measured maximum RSS from about
 1.45 GB to 334 MB while preserving byte-identical greedy output. Large output
 matrices run row-parallel with thread-local mmap views; smaller matrices stay
 sequential because measured fork/join overhead was higher below 1024 rows.
