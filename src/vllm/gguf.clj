@@ -174,8 +174,9 @@
   "Decode one GGML tensor payload into an unboxed JVM float array.
 
   Supports the dense types used by non-quantized models and the foundational
-  32-value Q4_0/Q4_1/Q8_0 block formats. K-block and importance-matrix formats
-  remain catalog-readable but fail explicitly until their kernels land."
+  32-value Q4_0/Q4_1/Q8_0 and 256-value Q4_K/Q5_K/Q6_K block formats.
+  Importance-matrix formats remain catalog-readable but fail explicitly until
+  their kernels land."
   [type ^ByteBuffer buffer element-count]
   (.order buffer ByteOrder/LITTLE_ENDIAN)
   (let [out (float-array (int element-count))
@@ -211,6 +212,86 @@
         (let [scale (half!)]
           (dotimes [i 32]
             (aset-float out (+ base i) (float (* scale (.get buffer)))))))
+      :q4-k
+      (doseq [base (range 0 element-count 256)]
+        (let [d (half!) dmin (half!) scales (byte-array 12) quants (byte-array 128)]
+          (.get buffer scales) (.get buffer quants)
+          (dotimes [group 8]
+            (let [scale (if (< group 4)
+                          (bit-and 63 (aget scales group))
+                          (bit-or (bit-and 15 (aget scales (+ group 4)))
+                                  (bit-shift-left
+                                   (bit-and 3 (unsigned-bit-shift-right
+                                               (bit-and 0xff (aget scales (- group 4))) 6)) 4)))
+                  minimum (if (< group 4)
+                            (bit-and 63 (aget scales (+ group 4)))
+                            (bit-or (bit-and 15 (unsigned-bit-shift-right
+                                                (bit-and 0xff (aget scales (+ group 4))) 4))
+                                    (bit-shift-left
+                                     (bit-and 3 (unsigned-bit-shift-right
+                                                 (bit-and 0xff (aget scales group)) 6)) 4)))
+                  quant-base (* (quot group 2) 32) high? (odd? group)]
+              (dotimes [i 32]
+                (let [packed (bit-and 0xff (aget quants (+ quant-base i)))
+                      q (if high? (unsigned-bit-shift-right packed 4)
+                            (bit-and packed 15))]
+                  (aset-float out (+ base (* group 32) i)
+                              (float (- (* d scale q) (* dmin minimum))))))))))
+      :q5-k
+      (doseq [base (range 0 element-count 256)]
+        (let [d (half!) dmin (half!) scales (byte-array 12)
+              high (byte-array 32) quants (byte-array 128)]
+          (.get buffer scales) (.get buffer high) (.get buffer quants)
+          (dotimes [group 8]
+            (let [scale (if (< group 4)
+                          (bit-and 63 (aget scales group))
+                          (bit-or (bit-and 15 (aget scales (+ group 4)))
+                                  (bit-shift-left
+                                   (bit-and 3 (unsigned-bit-shift-right
+                                               (bit-and 0xff (aget scales (- group 4))) 6)) 4)))
+                  minimum (if (< group 4)
+                            (bit-and 63 (aget scales (+ group 4)))
+                            (bit-or (bit-and 15 (unsigned-bit-shift-right
+                                                (bit-and 0xff (aget scales (+ group 4))) 4))
+                                    (bit-shift-left
+                                     (bit-and 3 (unsigned-bit-shift-right
+                                                 (bit-and 0xff (aget scales group)) 6)) 4)))
+                  pair (quot group 2) quant-base (* pair 32) high? (odd? group)
+                  high-mask (bit-shift-left 1 group)]
+              (dotimes [i 32]
+                (let [packed (bit-and 0xff (aget quants (+ quant-base i)))
+                      low (if high? (unsigned-bit-shift-right packed 4)
+                              (bit-and packed 15))
+                      q (+ low (if (zero? (bit-and (bit-and 0xff (aget high i))
+                                                   high-mask)) 0 16))]
+                  (aset-float out (+ base (* group 32) i)
+                              (float (- (* d scale q) (* dmin minimum))))))))))
+      :q6-k
+      (doseq [base (range 0 element-count 256)]
+        (let [low (byte-array 128) high (byte-array 64) scales (byte-array 16)]
+          (.get buffer low) (.get buffer high) (.get buffer scales)
+          (let [d (half!)]
+            (dotimes [half-block 2]
+              (let [out-base (+ base (* half-block 128))
+                    low-base (* half-block 64) high-base (* half-block 32)
+                    scale-base (* half-block 8)]
+                (dotimes [i 32]
+                  (let [lo-a (bit-and 0xff (aget low (+ low-base i)))
+                        lo-b (bit-and 0xff (aget low (+ low-base 32 i)))
+                        hi (bit-and 0xff (aget high (+ high-base i)))
+                        qs [(dec (+ (bit-and lo-a 15)
+                                   (bit-shift-left (bit-and hi 3) 4) -31))
+                            (dec (+ (bit-and lo-b 15)
+                                   (bit-shift-left (bit-and (unsigned-bit-shift-right hi 2) 3) 4) -31))
+                            (dec (+ (unsigned-bit-shift-right lo-a 4)
+                                   (bit-shift-left (bit-and (unsigned-bit-shift-right hi 4) 3) 4) -31))
+                            (dec (+ (unsigned-bit-shift-right lo-b 4)
+                                   (bit-shift-left (bit-and (unsigned-bit-shift-right hi 6) 3) 4) -31))]]
+                    (doseq [[segment q] (map-indexed vector qs)]
+                      (let [scale-index (+ scale-base (* segment 2) (quot i 16))
+                            scale (aget scales scale-index)]
+                        (aset-float out (+ out-base (* segment 32) i)
+                                    (float (* d scale q))))))))))))
       (throw (ex-info "GGML tensor type has no F32 decoder yet" {:type type})))
     (when (.hasRemaining buffer)
       (throw (ex-info "GGML decoder did not consume the complete tensor window"

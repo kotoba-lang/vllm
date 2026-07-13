@@ -132,9 +132,10 @@ layer. `open-file` parses scalar, string, nested-array metadata and the tensor
 catalog, validates alignment/block sizes/file windows, and leaves model payloads
 on disk. `read-tensor-bytes` reads only one requested tensor window. Catalog
 support covers F32/F16/BF16, integer tensors, and the common Q4/Q5/Q8/K-block
-encodings. F32/F16/BF16 plus Q4_0/Q4_1/Q8_0 payloads can now be lazily decoded
-into unboxed F32 arrays with `read-tensor-f32`; remaining K/IQ/TQ formats fail
-explicitly until their block kernels land.
+encodings. F32/F16/BF16, Q4_0/Q4_1/Q8_0, and the production-common
+Q4_K/Q5_K/Q6_K superblocks can be lazily decoded into unboxed F32 arrays with
+`read-tensor-f32`; remaining IQ/TQ formats fail explicitly until their block
+kernels land.
 
 ```clojure
 (require '[vllm.gguf :as gguf])
@@ -170,7 +171,7 @@ real JSON or streaming NDJSON on the standard port.
 (def http (server/start! local)) ; http://127.0.0.1:11434
 ```
 
-This is still not Ollama parity: common Q4_K/Q5_K/Q6_K kernels, exact chat
+This is still not Ollama parity: quantized-direct matrix kernels, exact chat
 template execution, concurrent/batched scheduling, persistent model manifests,
 GPU execution, and real-model throughput/correctness evidence remain required.
 
