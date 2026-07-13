@@ -158,7 +158,8 @@ maximum-score segmentation; `vllm.generate` provides seeded temperature,
 top-k/top-p, repetition-penalty sampling and incremental token callbacks.
 
 `vllm.ollama` ties those layers into a closeable local model registry and pure
-request handler for `GET /api/tags`, `POST /api/generate`, and `POST /api/chat`.
+request handler for `GET /api/tags`, `GET /api/ps`, `POST /api/show`,
+`DELETE /api/delete`, `POST /api/generate`, and `POST /api/chat`.
 The handler returns Ring-like response maps and optionally emits Ollama-shaped
 stream chunks. `vllm.ollama-server` exposes it through the JDK HTTP server as
 real JSON or streaming NDJSON on the standard port.
@@ -176,9 +177,16 @@ real JSON or streaming NDJSON on the standard port.
 (def http (server/start! local)) ; http://127.0.0.1:11434
 ```
 
-This is still not Ollama parity: fused/SIMD quantized matrix kernels, exact chat
-template execution, concurrent/batched scheduling, persistent model manifests,
-GPU execution, and real-model throughput/correctness evidence remain required.
+Generation runs through `vllm.scheduler`: a bounded worker/queue pool with
+per-model fair semaphores, immediate overload rejection, counters exposed by
+`/api/ps`, and graceful shutdown. `vllm.manifest` adds atomic model manifests
+and deduplicated `sha256-*` GGUF blobs. A runtime created with
+`{:model-store path}` can `install!` a model and `restore!` all named models
+after restart without duplicating identical weight files.
+
+This is still not Ollama parity: SIMD/GPU quantized matrix kernels, exact chat
+template execution, continuous batching, and production-scale throughput
+evidence remain required.
 
 ## Test
 
