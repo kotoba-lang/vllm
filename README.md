@@ -17,7 +17,7 @@ other EDN value — and leaves the socket to the host.
   `vllm.ports/ITransport`, not a baked-in client.
 
 Sibling libs: [jsonlogic-clj](../jsonlogic-clj) (rules-as-data),
-[mcp-clj](../mcp-clj) (protocol/transport-as-data),
+[mcp-clj](../org-anthropic-mcp) (protocol/transport-as-data),
 [torch-clj](../torch-clj) (module-graph-as-data).
 
 ## Why a shared library (org placement)
