@@ -16,9 +16,9 @@ other EDN value — and leaves the socket to the host.
 - **Data-first.** The request is plain EDN; the network is a host-injected
   `vllm.ports/ITransport`, not a baked-in client.
 
-Sibling libs: [jsonlogic-clj](../jsonlogic-clj) (rules-as-data),
+Sibling libs: [jsonlogic-clj](../jsonlogic) (rules-as-data),
 [mcp-clj](../org-anthropic-mcp) (protocol/transport-as-data),
-[torch-clj](../torch-clj) (module-graph-as-data).
+[torch-clj](../torch) (module-graph-as-data).
 
 ## Why a shared library (org placement)
 
