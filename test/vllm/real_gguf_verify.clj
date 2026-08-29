@@ -1,5 +1,5 @@
 (ns vllm.real-gguf-verify
-  (:require [clojure.data.json :as json]
+  (:require [json.data-json :as json]
             [vllm.gguf :as gguf]
             [vllm.ollama :as ollama]
             [vllm.ollama-server :as server])

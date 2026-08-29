@@ -1,6 +1,6 @@
 (ns vllm.real-continuous-verify
   "Two concurrent Ollama HTTP requests sharing one continuous Metal batch."
-  (:require [clojure.data.json :as json]
+  (:require [json.data-json :as json]
             [vllm.metal-worker :as metal]
             [vllm.ollama :as ollama]
             [vllm.ollama-server :as server]

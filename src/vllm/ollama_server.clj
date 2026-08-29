@@ -1,6 +1,6 @@
 (ns vllm.ollama-server
   "JDK HttpServer adapter exposing the embedded Ollama handler as JSON/NDJSON."
-  (:require [clojure.data.json :as json]
+  (:require [json.data-json :as json]
             [clojure.string :as str]
             [vllm.ollama :as ollama])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
