@@ -1,6 +1,6 @@
 (ns vllm.metal-worker
   "Synchronous JVM client for num's persistent Deno WebGPU/Metal worker."
-  (:require [clojure.data.json :as json]
+  (:require [json.data-json :as json]
             [vllm.accelerator :as accelerator])
   (:import [java.io BufferedReader BufferedWriter Closeable InputStreamReader OutputStreamWriter]
            [java.nio ByteBuffer]

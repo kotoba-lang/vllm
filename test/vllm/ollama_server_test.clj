@@ -1,5 +1,5 @@
 (ns vllm.ollama-server-test
-  (:require [clojure.data.json :as json]
+  (:require [json.data-json :as json]
             [clojure.test :refer [deftest is]]
             [vllm.ollama :as ollama]
             [vllm.ollama-server :as server])

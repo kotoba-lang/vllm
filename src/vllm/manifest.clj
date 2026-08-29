@@ -1,6 +1,6 @@
 (ns vllm.manifest
   "Content-addressed GGUF blob store with atomic JSON manifests."
-  (:require [clojure.data.json :as json])
+  (:require [json.data-json :as json])
   (:import [java.nio.file Files Path Paths StandardCopyOption StandardOpenOption]
            [java.security MessageDigest]
            [java.time Instant]))
