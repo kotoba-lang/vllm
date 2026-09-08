@@ -1,6 +1,6 @@
 (ns vllm.tokenizer
   "GGUF-embedded Llama/SentencePiece tokenizer with Viterbi segmentation."
-  (:require [clojure.string :as str])
+  (:require [kotoba.lang.text :as str])
   (:import [java.io ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]))
 

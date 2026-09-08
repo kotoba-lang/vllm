@@ -3,7 +3,7 @@
   maps `{:vllm/severity :error|:warn :vllm/code :vllm/field :vllm/msg}`.
   `valid?` is true iff there are no :error-level problems. Sampling range checks
   are delegated to `vllm.sampling/problems`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [vllm.sampling :as sampling]))
 
 (defn- problem [severity code field msg]

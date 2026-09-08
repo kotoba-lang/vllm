@@ -4,7 +4,7 @@
   extends the OpenAI sampling surface (top_k, min_p, repetition_penalty,
   best_of, and the `guided_*` structured-output knobs); those live here too so
   the request model stays a plain map."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def defaults
   "A conservative default sampling map."

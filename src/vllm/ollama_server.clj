@@ -1,7 +1,7 @@
 (ns vllm.ollama-server
   "JDK HttpServer adapter exposing the embedded Ollama handler as JSON/NDJSON."
   (:require [json.data-json :as json]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [vllm.ollama :as ollama])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io Closeable]
@@ -32,7 +32,7 @@
   (reify HttpHandler
     (handle [_ exchange]
       (try
-        (let [method (keyword (str/lower-case (.getRequestMethod exchange)))
+        (let [method (keyword (str/lower (.getRequestMethod exchange)))
               path (.getPath (.getRequestURI exchange))
               body (read-body exchange)
               streaming? (and (contains? #{"/api/generate" "/api/chat"} path)

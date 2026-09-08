@@ -4,7 +4,12 @@
  ;; A vLLM inference request IS data (:vllm/* maps); the library renders it to the
  ;; OpenAI/vLLM wire shape (string-keyed maps) and normalizes responses. The actual
  ;; HTTP + JSON (de)serialization is a host-injected ITransport port.
- :deps {io.github.kotoba-lang/json {:git/sha "b47b06486b3ad53051bc7d8bf361f4176f467202"}}
+ :deps {
+        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
+        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
+        ;; this repo silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+       io.github.kotoba-lang/json {:git/sha "b47b06486b3ad53051bc7d8bf361f4176f467202"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
