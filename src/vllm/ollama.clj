@@ -1,6 +1,6 @@
 (ns vllm.ollama
   "Embedded Ollama-compatible model registry and API handler."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [vllm.generate :as generate]
             [vllm.gguf :as gguf]
             [vllm.llama :as llama]

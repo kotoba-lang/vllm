@@ -7,7 +7,7 @@
   - `render`        : request EDN        → string-keyed request body
   - `parse-response`: parsed JSON map    → normalized `:vllm/*` result
   - `parse-chunk`   : one SSE data chunk → normalized `:vllm/*` delta"
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [vllm.sampling :as sampling]))
 
 ;; ---------------------------------------------------------------------------
