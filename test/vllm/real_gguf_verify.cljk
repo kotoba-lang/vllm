@@ -22,7 +22,7 @@
 
 (defn -main [& [path]]
   (when-not path
-    (throw (ex-info "usage: clojure -M:real-gguf-verify /path/model.gguf" {})))
+    (throw (ex-info "usage: kbb -M:real-gguf-verify /path/model.gguf" {})))
   (let [started (System/nanoTime)]
     (with-open [catalog (gguf/open-file path)
                 runtime (ollama/runtime {:workers 1 :queue-capacity 2})]

@@ -195,14 +195,14 @@ throughput evidence remain required.
 ## Test
 
 ```
-clojure -M:test
+kbb -M:test
 ```
 
 Real GGUF verification is opt-in so the repository does not vendor model
 weights:
 
 ```sh
-clojure -M:real-gguf-verify /models/stories15M-q8_0.gguf
+kbb -M:real-gguf-verify /models/stories15M-q8_0.gguf
 ```
 
 The verified public fixture is `ggml-org/tiny-llamas/stories15M-q8_0.gguf`
