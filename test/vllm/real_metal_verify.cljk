@@ -18,7 +18,7 @@
 
 (defn -main [& [path worker-path]]
   (when-not path
-    (throw (ex-info "usage: clojure -M:real-metal-verify model.gguf [worker.cjs]" {})))
+    (throw (ex-info "usage: kbb -M:real-metal-verify model.gguf [worker.cjs]" {})))
   (with-open [cpu-file (gguf/open-file path)
               gpu-file (gguf/open-file path)
               worker (metal/start ["deno" "run" "--allow-all"
