@@ -1,6 +1,6 @@
 (ns vllm.ollama
   "Embedded Ollama-compatible model registry and API handler."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.io :as kio] [kotoba.lang.text :as str]
             [vllm.generate :as generate]
             [vllm.gguf :as gguf]
             [vllm.llama :as llama]
@@ -204,7 +204,7 @@
                               {"name" name "model" name
                                "modified_at" (str (Instant/now))
                                "size" (when-let [path (:path engine)]
-                                        (.length (java.io.File. path)))
+                                        (kio/length (kio/file path)))
                                "details" {"format" "gguf"
                                           "family" "llama"}})
                             (sort-by key @(:models runtime)))}}
@@ -214,7 +214,7 @@
      :body {"models" (mapv (fn [[name engine]]
                               {"name" name "model" name
                                "size" (when-let [path (:path engine)]
-                                        (.length (java.io.File. path)))
+                                        (kio/length (kio/file path)))
                                "prefix_cache" (when-let [cache (:prefix-cache engine)]
                                                   (prefix-cache/stats cache))})
                             (sort-by key @(:models runtime)))

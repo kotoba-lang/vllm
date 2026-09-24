@@ -1,10 +1,10 @@
 (ns vllm.metal-worker
   "Synchronous JVM client for num's persistent Deno WebGPU/Metal worker."
-  (:require [json.data-json :as json]
+  (:require [kotoba.bytes :as kbytes] [json.data-json :as json]
             [vllm.accelerator :as accelerator])
   (:import [java.io BufferedReader BufferedWriter Closeable InputStreamReader OutputStreamWriter]
            [java.nio ByteBuffer]
-           [java.util Base64 UUID]
+           [java.util UUID]
            [java.lang ProcessBuilder$Redirect]))
 
 (defn- fail [message data] (throw (ex-info (str "vllm.metal-worker: " message) data)))
@@ -29,7 +29,7 @@
   (upload-q8! [this id rows columns bytes]
     (locking lock
       (let [handle (str id "-" (UUID/randomUUID))
-            encoded (.encodeToString (Base64/getEncoder)
+            encoded (kbytes/base64-encode
                                      (if (instance? ByteBuffer bytes)
                                        (buffer-bytes bytes)
                                        ^bytes bytes))]
@@ -57,7 +57,7 @@
       (fail "unsupported Metal quantization" {:type type}))
     (locking lock
       (let [handle (str id "-" (UUID/randomUUID))
-            encoded (.encodeToString (Base64/getEncoder)
+            encoded (kbytes/base64-encode
                                      (if (instance? ByteBuffer bytes)
                                        (buffer-bytes bytes)
                                        ^bytes bytes))]
