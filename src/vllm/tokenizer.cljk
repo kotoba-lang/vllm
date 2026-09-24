@@ -1,8 +1,7 @@
 (ns vllm.tokenizer
   "GGUF-embedded Llama/SentencePiece tokenizer with Viterbi segmentation."
-  (:require [kotoba.lang.text :as str])
-  (:import [java.io ByteArrayOutputStream]
-           [java.nio.charset StandardCharsets]))
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str])
+  (:import [java.io ByteArrayOutputStream]))
 
 (defn from-metadata [metadata]
   (let [tokens (get metadata "tokenizer.ggml.tokens")
@@ -94,7 +93,7 @@
               (:unknown-id tokenizer)
               (throw (ex-info "tokenizer has no byte fallback or unknown token"
                               {:byte (bit-and 0xff b)}))))
-        (.getBytes text StandardCharsets/UTF_8)))
+        (kbytes/utf8-bytes text)))
 
 (defn encode
   "Encode text using maximum-score SentencePiece segmentation. Options:
@@ -134,7 +133,7 @@
   (let [out (StringBuilder.) bytes (ByteArrayOutputStream.)
         flush! (fn []
                  (when (pos? (.size bytes))
-                   (.append out (String. (.toByteArray bytes) StandardCharsets/UTF_8))
+                   (.append out (kbytes/utf8-string (.toByteArray bytes)))
                    (.reset bytes)))]
     (doseq [id token-ids]
       (let [token (get (:tokens tokenizer) id)

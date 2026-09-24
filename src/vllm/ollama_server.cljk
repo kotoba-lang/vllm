@@ -1,12 +1,11 @@
 (ns vllm.ollama-server
   "JDK HttpServer adapter exposing the embedded Ollama handler as JSON/NDJSON."
-  (:require [json.data-json :as json]
+  (:require [kotoba.bytes :as kbytes] [json.data-json :as json]
             [kotoba.lang.text :as str]
             [vllm.ollama :as ollama])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io Closeable]
            [java.net InetSocketAddress]
-           [java.nio.charset StandardCharsets]
            [java.util.concurrent Executors]))
 
 (defrecord Server [^HttpServer server executor port]
@@ -15,12 +14,12 @@
     (.stop server 0)
     (.shutdownNow ^java.util.concurrent.ExecutorService executor)))
 
-(defn- utf8-bytes [value] (.getBytes (str value) StandardCharsets/UTF_8))
+(defn- utf8-bytes [value] (kbytes/utf8-bytes (str value)))
 
 (defn- read-body [^HttpExchange exchange]
   (let [payload (.readAllBytes (.getRequestBody exchange))]
     (if (zero? (alength payload)) {}
-        (json/read-str (String. payload StandardCharsets/UTF_8)))))
+        (json/read-str (kbytes/utf8-string payload)))))
 
 (defn- send! [^HttpExchange exchange status content-type body]
   (let [payload (utf8-bytes (json/write-str body))]

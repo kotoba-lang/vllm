@@ -2,8 +2,8 @@
   "Validated, lazy JVM GGUF v3 reader for local inference runtimes."
   (:import [java.io Closeable RandomAccessFile]
            [java.nio ByteBuffer ByteOrder]
-           [java.nio.channels FileChannel FileChannel$MapMode]
-           [java.nio.charset StandardCharsets]))
+           [java.nio.channels FileChannel FileChannel$MapMode])
+  (:require [kotoba.bytes :as kbytes]))
 
 (def ^:private value-types
   {0 :uint8 1 :int8 2 :uint16 3 :int16 4 :uint32 5 :int32
@@ -64,7 +64,7 @@
       (throw (ex-info "invalid GGUF string length" {:length n})))
     (let [bytes (byte-array (int n))]
       (.readFully f bytes)
-      (String. bytes StandardCharsets/UTF_8))))
+      (kbytes/utf8-string bytes))))
 
 (declare read-value)
 (defn- read-value [^RandomAccessFile f type-id]
