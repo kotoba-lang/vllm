@@ -5,7 +5,7 @@
             [vllm.validate :as v]
             [vllm.ports :as ports]
             [vllm.core :as core]
-            #?(:clj  [clojure.test :refer [deftest is testing]]
+            #?(:clj  [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test    :refer-macros [deftest is testing]])))
 
 ;; ---------------------------------------------------------------------------

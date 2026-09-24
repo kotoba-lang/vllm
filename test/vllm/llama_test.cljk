@@ -1,5 +1,5 @@
 (ns vllm.llama-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [vllm.accelerator :as accelerator]
             [vllm.llama :as llama])
   (:import [java.nio ByteBuffer ByteOrder]))
