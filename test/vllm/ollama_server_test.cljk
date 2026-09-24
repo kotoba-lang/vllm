@@ -1,6 +1,6 @@
 (ns vllm.ollama-server-test
   (:require [json.data-json :as json]
-            [clojure.test :refer [deftest is]]
+            [kotoba.test :refer [deftest is]]
             [vllm.ollama :as ollama]
             [vllm.ollama-server :as server])
   (:import [java.net URI]

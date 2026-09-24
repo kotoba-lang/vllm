@@ -1,5 +1,5 @@
 (ns vllm.generate-test
-  (:require [clojure.test :refer [deftest is]] [vllm.generate :as generate]))
+  (:require [kotoba.test :refer [deftest is]] [vllm.generate :as generate]))
 
 (deftest deterministic-generation-prefills-stops-and-streams
   (let [position (atom 0) streamed (atom [])

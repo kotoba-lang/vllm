@@ -1,5 +1,5 @@
 (ns vllm.manifest-test
-  (:require [clojure.test :refer [deftest is]] [vllm.manifest :as manifest])
+  (:require [kotoba.test :refer [deftest is]] [vllm.manifest :as manifest])
   (:import [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))
 

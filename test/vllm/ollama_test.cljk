@@ -1,5 +1,5 @@
 (ns vllm.ollama-test
-  (:require [clojure.test :refer [deftest is]] [vllm.ollama :as ollama]))
+  (:require [kotoba.test :refer [deftest is]] [vllm.ollama :as ollama]))
 
 (defn- fake-engine [prompts]
   {:name "tiny"

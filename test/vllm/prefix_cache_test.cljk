@@ -1,5 +1,5 @@
 (ns vllm.prefix-cache-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [vllm.prefix-cache :as cache])
   (:import [java.io Closeable]))
 

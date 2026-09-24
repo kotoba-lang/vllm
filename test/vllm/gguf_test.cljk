@@ -1,5 +1,5 @@
 (ns vllm.gguf-test
-  (:require [clojure.test :refer [deftest is]] [vllm.gguf :as gguf])
+  (:require [kotoba.test :refer [deftest is]] [vllm.gguf :as gguf])
   (:import [java.nio ByteBuffer ByteOrder]
            [java.nio.file Files OpenOption]
            [java.nio.file.attribute FileAttribute]))

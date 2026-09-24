@@ -1,5 +1,5 @@
 (ns vllm.tokenizer-test
-  (:require [clojure.test :refer [deftest is]] [vllm.tokenizer :as tokenizer]))
+  (:require [kotoba.test :refer [deftest is]] [vllm.tokenizer :as tokenizer]))
 
 (def metadata
   {"tokenizer.ggml.model" "llama"

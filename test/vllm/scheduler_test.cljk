@@ -1,5 +1,5 @@
 (ns vllm.scheduler-test
-  (:require [clojure.test :refer [deftest is]] [vllm.scheduler :as scheduler])
+  (:require [kotoba.test :refer [deftest is]] [vllm.scheduler :as scheduler])
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (deftest bounded-queue-per-model-serialization-and-stats
