@@ -1,6 +1,6 @@
 (ns vllm.llama
   "Reference Llama-family decoder with RoPE, GQA, SwiGLU, and mutable KV cache."
-  (:require [vllm.accelerator :as accelerator]
+  (:require [kotoba.lang.error :as kerror] [vllm.accelerator :as accelerator]
             [vllm.gguf :as gguf])
   (:import [java.nio ByteBuffer ByteOrder]
            [java.util.function IntConsumer Supplier]
@@ -390,7 +390,7 @@
           final (rms-norm hidden (tensor! model "output_norm.weight")
                           (or rms-epsilon 1.0e-5))
           output-weight (try (tensor! model "output.weight")
-                             (catch clojure.lang.ExceptionInfo _
+                             (catch kerror/ExceptionInfo _
                                (tensor! model "token_embd.weight")))
           logits (matrix-vector output-weight final)]
       (swap! (:position state) inc)
@@ -443,7 +443,7 @@
           output-norm (tensor! model "output_norm.weight")
           final (mapv #(rms-norm % output-norm (or rms-epsilon 1.0e-5)) hidden)
           output-weight (try (tensor! model "output.weight")
-                             (catch clojure.lang.ExceptionInfo _
+                             (catch kerror/ExceptionInfo _
                                (tensor! model "token_embd.weight")))
           logits (matrix-vector-batch output-weight final)]
       (doseq [state states] (swap! (:position state) inc))

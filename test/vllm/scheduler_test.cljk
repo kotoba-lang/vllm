@@ -1,5 +1,5 @@
 (ns vllm.scheduler-test
-  (:require [kotoba.test :refer [deftest is]] [vllm.scheduler :as scheduler])
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is]] [vllm.scheduler :as scheduler])
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (deftest bounded-queue-per-model-serialization-and-stats
@@ -11,7 +11,7 @@
       (is (.await entered 1 TimeUnit/SECONDS))
       (let [second (scheduler/submit! s "m" (constantly :second))
             third (scheduler/submit! s "other" (constantly :third))]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"queue is full"
+        (is (thrown-with-msg? kerror/ExceptionInfo #"queue is full"
                               (scheduler/submit! s "overflow" (constantly :no))))
         (.countDown release)
         (is (= :first (.get first)))
